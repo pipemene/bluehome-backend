@@ -1,12 +1,12 @@
 import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
+import { config } from 'dotenv';
+import bodyParser from 'body-parser';
 import { OpenAI } from 'openai';
 
-dotenv.config();
+config(); // Cargar variables del .env
+
 const app = express();
-app.use(cors());
-app.use(express.json());
+app.use(bodyParser.json());
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -14,18 +14,30 @@ const openai = new OpenAI({
 
 app.post('/api/chat', async (req, res) => {
   try {
-    const { prompt } = req.body;
-    const chatCompletion = await openai.chat.completions.create({
-      model: 'gpt-4',
-      messages: [{ role: 'user', content: prompt }],
+    const { pregunta } = req.body;
+
+    if (!pregunta) {
+      return res.status(400).json({ error: 'Falta el campo "pregunta"' });
+    }
+
+    const completion = await openai.chat.completions.create({
+      messages: [
+        { role: 'system', content: 'Eres un asistente de una inmobiliaria en Palmira. Responde claro y directo.' },
+        { role: 'user', content: pregunta },
+      ],
+      model: 'gpt-4o',
     });
-    res.json({ response: chatCompletion.choices[0].message.content });
+
+    const respuesta = completion.choices[0]?.message?.content || 'Sin respuesta';
+    res.json({ respuesta });
+
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Error generando respuesta de ChatGPT' });
+    console.error('[ERROR GPT]', error);
+    res.status(500).json({ error: 'Error generando respuesta de ChatGPT', detalle: error.message });
   }
 });
 
-app.listen(8080, () => {
-  console.log('Servidor escuchando en http://localhost:8080');
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => {
+  console.log(`Servidor escuchando en http://localhost:${PORT}`);
 });
