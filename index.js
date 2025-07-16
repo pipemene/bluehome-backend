@@ -1,56 +1,48 @@
 
-import express from "express";
-import bodyParser from "body-parser";
-import dotenv from "dotenv";
-import axios from "axios";
-import cors from "cors";
-import { ChatOpenAI } from "langchain/chat_models/openai";
-import { HumanMessage, SystemMessage } from "langchain/schema";
+import express from 'express';
+import bodyParser from 'body-parser';
+import axios from 'axios';
 
-dotenv.config();
 const app = express();
 app.use(bodyParser.json());
-app.use(cors());
 
-const chatModel = new ChatOpenAI({
-  openAIApiKey: process.env.OPENAI_API_KEY,
-  temperature: 0.4,
-  modelName: "gpt-4o",
+const PORT = process.env.PORT || 3000;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const PROMPT_BASE = process.env.PROMPT_BASE;
+
+app.post('/webhook', async (req, res) => {
+    const userMessage = req.body.message || '';
+    const userId = req.body.user_id || 'default_user';
+
+    const messages = [
+        { role: 'system', content: PROMPT_BASE },
+        { role: 'user', content: userMessage }
+    ];
+
+    try {
+        const response = await axios.post(
+            'https://api.openai.com/v1/chat/completions',
+            {
+                model: 'gpt-4o',
+                messages: messages,
+                temperature: 0.7
+            },
+            {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${OPENAI_API_KEY}`
+                }
+            }
+        );
+
+        const reply = response.data.choices[0].message.content;
+        res.json({ reply });
+    } catch (error) {
+        console.error('Error:', error.response ? error.response.data : error.message);
+        res.status(500).json({ error: 'Error al procesar la solicitud' });
+    }
 });
 
-const historial = {};
-
-app.post("/api/chat", async (req, res) => {
-  try {
-    const { pregunta, userId } = req.body;
-
-    if (!pregunta || !userId) {
-      return res.status(400).json({ error: "Missing fields" });
-    }
-
-    const promptFinal = process.env.PROMPT_BASE;
-
-    if (!promptFinal) {
-      return res.status(400).json({ error: "No hay prompt definido" });
-    }
-
-    if (!historial[userId]) {
-      historial[userId] = [new SystemMessage(promptFinal)];
-    }
-
-    historial[userId].push(new HumanMessage(pregunta));
-    const respuesta = await chatModel.call(historial[userId]);
-
-    historial[userId].push(respuesta);
-
-    res.json({ respuesta: respuesta.content });
-  } catch (error) {
-    console.error("Error procesando la solicitud:", error.message);
-    res.status(500).json({ error: "Error generando respuesta de ChatGPT" });
-  }
-});
-
-const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`Servidor escuchando en http://localhost:${PORT}`);
+    console.log(`Servidor corriendo en puerto ${PORT}`);
 });
