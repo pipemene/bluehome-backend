@@ -1,55 +1,41 @@
-
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
-import bodyParser from 'body-parser';
-import { config } from 'dotenv';
-import { OpenAI } from 'openai';
-
-config();
+import * as dotenv from 'dotenv';
+dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 3000;
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 app.use(cors());
-app.use(bodyParser.json());
+app.use(express.json());
 
-let chatHistory = {};
-
-function getContextWithPrompt(userId, pregunta) {
-  const history = chatHistory[userId] || [];
-  const prompt = process.env.PROMPT || "Responde como asistente de Blue Home Inmobiliaria.";
-  return [
-    { role: 'system', content: prompt },
-    ...history,
-    { role: 'user', content: pregunta }
-  ];
-}
+const prompt = process.env.BLUEHOME_PROMPT || "Eres el asistente de Blue Home Inmobiliaria...";
 
 app.post('/api/chat', async (req, res) => {
-  try {
-    const { userId, pregunta } = req.body;
-    if (!userId || !pregunta) {
-      return res.status(400).json({ error: 'Faltan campos requeridos: userId o pregunta' });
-    }
+  const { userId, pregunta } = req.body;
+  if (!userId || !pregunta) return res.status(400).json({ error: "Missing fields" });
 
-    const response = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: getContextWithPrompt(userId, pregunta),
+  const context = `Usuario ${userId}: ${pregunta}`;
+
+  try {
+    const response = await axios.post("https://api.openai.com/v1/chat/completions", {
+      model: "gpt-4",
+      messages: [
+        { role: "system", content: prompt },
+        { role: "user", content: context }
+      ]
+    }, {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`
+      }
     });
 
-    const respuesta = response.choices[0].message.content;
-
-    chatHistory[userId] = [...(chatHistory[userId] || []), { role: 'user', content: pregunta }, { role: 'assistant', content: respuesta }];
-
+    const respuesta = response.data.choices[0].message.content;
     res.json({ respuesta });
   } catch (error) {
-    console.error('Error procesando /api/chat', error.message);
-    res.status(500).json({ error: 'Error interno en /api/chat' });
+    res.status(500).json({ error: "Error en OpenAI", details: error.message });
   }
 });
 
-app.listen(port, () => {
-  console.log(`Servidor escuchando en puerto ${port}`);
-});
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Servidor corriendo en puerto ${PORT}`));
