@@ -61,9 +61,10 @@ app.get("/api/sheet", async (req, res) => {
 app.get("/api/simi/:code", async (req, res) => {
   const code = req.params.code;
   try {
-    const response = await axios.get(\`\${process.env.SIMI_API_URL}/inmuebles/\${code}\`, {
+    const simiUrl = `${process.env.SIMI_API_URL}/inmuebles/${code}`;
+    const response = await axios.get(simiUrl, {
       headers: {
-        Authorization: \`Bearer \${process.env.SIMI_API_TOKEN}\`,
+        Authorization: `Bearer ${process.env.SIMI_API_TOKEN}`,
       },
     });
     res.json(response.data);
@@ -73,5 +74,5 @@ app.get("/api/simi/:code", async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(\`Servidor iniciado en el puerto \${port}\`);
+  console.log(`Servidor iniciado en el puerto ${port}`);
 });
