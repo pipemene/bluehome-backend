@@ -1,3 +1,4 @@
+
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
@@ -10,24 +11,18 @@ app.use(express.json());
 
 const prompt = process.env.BLUEHOME_PROMPT || "Eres el asistente de Blue Home Inmobiliaria...";
 
-const history = {};
-
 app.post('/api/chat', async (req, res) => {
   const { userId, pregunta } = req.body;
   if (!userId || !pregunta) return res.status(400).json({ error: "Missing fields" });
 
-  history[userId] = history[userId] || [];
-  history[userId].push({ role: "user", content: pregunta });
-
-  const mensajes = [
-    { role: "system", content: prompt },
-    ...(history[userId] || [])
-  ];
-
+  const context = `Usuario ${userId}: ${pregunta}`;
   try {
     const response = await axios.post("https://api.openai.com/v1/chat/completions", {
       model: "gpt-4",
-      messages: mensajes
+      messages: [
+        { role: "system", content: prompt },
+        { role: "user", content: context }
+      ]
     }, {
       headers: {
         "Content-Type": "application/json",
@@ -36,38 +31,20 @@ app.post('/api/chat', async (req, res) => {
     });
 
     const respuesta = response.data.choices[0].message.content;
-    history[userId].push({ role: "assistant", content: respuesta });
     res.json({ respuesta });
   } catch (error) {
     res.status(500).json({ error: "Error en OpenAI", details: error.message });
   }
 });
 
-app.get('/api/simi/:code', async (req, res) => {
-  const code = req.params.code;
+app.get('/api/inmueble/:codigo', async (req, res) => {
+  const codigo = req.params.codigo;
+  const token = process.env.SIMI_API_TOKEN;
   try {
-    const response = await axios.get(
-      `https://simi-api.com/iframeNvo/index.php`,
-      {
-        params: {
-          inmo: '901',
-          typebox: '1',
-          numbbox: '3',
-          viewtitlesearch: '1',
-          titlesearch: 'Buscador de Inmuebles',
-          colortitlesearch: 'FFFFFF',
-          bgtitlesearch: '0076BD',
-          secondct: '0076BD',
-          primaryc: '0076BD',
-          primaryct: 'ffff',
-          token: process.env.SIMI_API_TOKEN,
-          code: code
-        }
-      }
-    );
-    res.json({ data: response.data });
+    const response = await axios.get(`https://simi-api.com/ApiS/v2/Inmueble/detalle/901-${codigo}?token=${token}`);
+    res.json(response.data);
   } catch (error) {
-    res.status(500).json({ error: "Error consultando API de Simi", details: error.message });
+    res.status(500).json({ error: "Error al consultar API de Simi", details: error.message });
   }
 });
 
