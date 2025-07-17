@@ -31,7 +31,13 @@ app.post('/api/chat', async (req, res) => {
     });
 
     const respuesta = response.data.choices[0].message.content;
-    res.json({ respuesta });
+
+    let etiqueta = null;
+    if (pregunta.toLowerCase().includes("administrar") || pregunta.toLowerCase().includes("entregar mi inmueble")) {
+      etiqueta = "Interes_Administracion";
+    }
+
+    res.json({ respuesta, etiqueta });
   } catch (error) {
     res.status(500).json({ error: "Error en OpenAI", details: error.message });
   }
