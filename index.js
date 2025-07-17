@@ -1,4 +1,3 @@
-
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
@@ -11,44 +10,18 @@ app.use(express.json());
 
 const prompt = process.env.BLUEHOME_PROMPT || "Eres el asistente de Blue Home Inmobiliaria...";
 
-// Función para enviar respuesta a ManyChat
-const enviarRespuestaManychat = async (userId, respuesta) => {
-  try {
-    await axios.post("https://api.manychat.com/fb/sendContent", {
-      subscriber_id: userId,
-      data: {
-        version: "v2",
-        content: {
-          messages: [
-            { type: "text", text: respuesta }
-          ]
-        }
-      }
-    }, {
-      headers: {
-        "Authorization": `Bearer ${process.env.MANYCHAT_API_KEY}`,
-        "Content-Type": "application/json"
-      }
-    });
-  } catch (error) {
-    console.error("Error al enviar a ManyChat:", error.message);
-  }
-};
-
 app.post('/api/chat', async (req, res) => {
   const { userId, pregunta } = req.body;
-  if (!userId || !pregunta) return res.status(400).json({ error: "Faltan campos" });
-
-  res.json({ message: "Procesando..." }); // Respuesta inmediata para evitar timeout
+  if (!userId || !pregunta) return res.status(400).json({ error: "Missing fields" });
 
   try {
-    const context = `Usuario ${userId}: ${pregunta}`;
     const response = await axios.post("https://api.openai.com/v1/chat/completions", {
       model: "gpt-4",
       messages: [
         { role: "system", content: prompt },
-        { role: "user", content: context }
-      ]
+        { role: "user", content: `Usuario ${userId}: ${pregunta}` }
+      ],
+      temperature: 0.4,
     }, {
       headers: {
         "Content-Type": "application/json",
@@ -57,12 +30,11 @@ app.post('/api/chat', async (req, res) => {
     });
 
     const respuesta = response.data.choices[0].message.content;
-    await enviarRespuestaManychat(userId, respuesta);
+    res.json({ respuesta });
   } catch (error) {
-    console.error("Error al procesar mensaje:", error.message);
-    await enviarRespuestaManychat(userId, "Lo siento, ocurrió un error al procesar tu mensaje.");
+    res.status(500).json({ error: "Error en OpenAI", details: error.message });
   }
 });
 
-const PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Servidor corriendo en puerto ${PORT}`));
