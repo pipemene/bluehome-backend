@@ -9,70 +9,22 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const prompt = process.env.BLUEHOME_PROMPT || "Eres el asistente de Blue Home Inmobiliaria...";
-
-function calcularIngresos(canon) {
-  const canonNum = Number(canon);
-  if (isNaN(canonNum) || canonNum <= 0) return null;
-
-  const porcentajeAdmin = 0.105;
-  const iva = 0.19;
-  const porcentajeAmparoBasico = 0.0205;
-  const smmlv = 1423500;
-  const porcentajeAmparoIntegral = 0.1231;
-
-  const admin = canonNum * porcentajeAdmin;
-  const adminConIVA = admin + admin * iva;
-  const amparoBasico = canonNum * porcentajeAmparoBasico;
-  const amparoIntegral = (canonNum + smmlv) * porcentajeAmparoIntegral;
-
-  const totalPrimerMes = canonNum - (adminConIVA + amparoBasico + amparoIntegral);
-  const totalMesesSiguientes = canonNum - (adminConIVA + amparoBasico);
-
-  return {
-    canon: canonNum,
-    admin: adminConIVA.toFixed(0),
-    amparoBasico: amparoBasico.toFixed(0),
-    amparoIntegral: amparoIntegral.toFixed(0),
-    totalPrimerMes: totalPrimerMes.toFixed(0),
-    totalMesesSiguientes: totalMesesSiguientes.toFixed(0)
-  };
-}
+const prompt = process.env.BLUEHOME_PROMPT || "Eres el asistente de Blue Home Inmobiliaria. Cada vez que un usuario pregunte por tarifas de administración, explícale que la tarifa es del 10.5% + IVA sobre el canon, más el 2.05% de amparo básico, ambos mensuales. Luego sugiérele que escriba el valor del canon para hacerle una simulación personalizada.";
 
 app.post('/api/chat', async (req, res) => {
-  const { userId, pregunta } = req.body;
+  const { userId, pregunta, history = [] } = req.body;
   if (!userId || !pregunta) return res.status(400).json({ error: "Missing fields" });
 
-  const context = `Usuario ${userId}: ${pregunta}`;
-
-  // Buscar canon en texto
-  const canonMatch = pregunta.match(/\$?\s?(\d{6,9})/);
-  const datosCanon = canonMatch ? calcularIngresos(canonMatch[1]) : null;
-
-  let extraPrompt = "";
-  if (datosCanon) {
-    extraPrompt = `
-✅ Sobre un canon de ${datosCanon.canon} COP:
-
-• Administración (10.5% + IVA): ${datosCanon.admin} COP
-• Amparo básico (2.05% mensual): ${datosCanon.amparoBasico} COP
-• Amparo integral (solo primer mes): ${datosCanon.amparoIntegral} COP
-
-💰 Propietario recibe:
-• Primer mes: ${datosCanon.totalPrimerMes} COP
-• Meses siguientes: ${datosCanon.totalMesesSiguientes} COP
-
-Recuerda que este es un cálculo estimado. Un asesor puede ayudarte con más detalle.
-`;
-  }
+  const messages = [
+    { role: "system", content: prompt },
+    ...history,
+    { role: "user", content: pregunta }
+  ];
 
   try {
     const response = await axios.post("https://api.openai.com/v1/chat/completions", {
       model: "gpt-4",
-      messages: [
-        { role: "system", content: prompt },
-        { role: "user", content: context + extraPrompt }
-      ]
+      messages
     }, {
       headers: {
         "Content-Type": "application/json",
