@@ -1,3 +1,4 @@
+
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
@@ -10,33 +11,10 @@ app.use(express.json());
 
 const prompt = process.env.BLUEHOME_PROMPT || "Eres el asistente de Blue Home Inmobiliaria...";
 
-// Responder de inmediato a ManyChat y luego enviar la respuesta
-app.post('/api/chat', async (req, res) => {
-  const { userId, pregunta, nombre } = req.body;
-  if (!userId || !pregunta) return res.status(400).json({ error: "Missing fields" });
-
-  res.status(200).json({ message: "Procesando..." }); // respuesta inmediata
-
-  const context = `Usuario ${nombre || userId}: ${pregunta}`;
-
+// Función para enviar respuesta a ManyChat
+const enviarRespuestaManychat = async (userId, respuesta) => {
   try {
-    const response = await axios.post("https://api.openai.com/v1/chat/completions", {
-      model: "gpt-4",
-      messages: [
-        { role: "system", content: prompt },
-        { role: "user", content: context }
-      ]
-    }, {
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`
-      }
-    });
-
-    const respuesta = response.data.choices[0].message.content;
-
-    // Enviar la respuesta a ManyChat con su API
-    await axios.post(`https://api.manychat.com/fb/sending/sendContent`, {
+    await axios.post("https://api.manychat.com/fb/sendContent", {
       subscriber_id: userId,
       data: {
         version: "v2",
@@ -52,9 +30,37 @@ app.post('/api/chat', async (req, res) => {
         "Content-Type": "application/json"
       }
     });
-
   } catch (error) {
-    console.error("Error:", error.message);
+    console.error("Error al enviar a ManyChat:", error.message);
+  }
+};
+
+app.post('/api/chat', async (req, res) => {
+  const { userId, pregunta } = req.body;
+  if (!userId || !pregunta) return res.status(400).json({ error: "Faltan campos" });
+
+  res.json({ message: "Procesando..." }); // Respuesta inmediata para evitar timeout
+
+  try {
+    const context = `Usuario ${userId}: ${pregunta}`;
+    const response = await axios.post("https://api.openai.com/v1/chat/completions", {
+      model: "gpt-4",
+      messages: [
+        { role: "system", content: prompt },
+        { role: "user", content: context }
+      ]
+    }, {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`
+      }
+    });
+
+    const respuesta = response.data.choices[0].message.content;
+    await enviarRespuestaManychat(userId, respuesta);
+  } catch (error) {
+    console.error("Error al procesar mensaje:", error.message);
+    await enviarRespuestaManychat(userId, "Lo siento, ocurrió un error al procesar tu mensaje.");
   }
 });
 
