@@ -1,11 +1,9 @@
-
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
 import * as dotenv from 'dotenv';
-import fetch from 'node-fetch';
+import fs from 'fs';
 import csv from 'csv-parser';
-import { Readable } from 'stream';
 
 dotenv.config();
 
@@ -14,66 +12,76 @@ app.use(cors());
 app.use(express.json());
 
 const prompt = process.env.BLUEHOME_PROMPT || "Eres el asistente de Blue Home Inmobiliaria...";
+const GOOGLE_SHEET_CSV = process.env.GOOGLE_SHEET_CSV;
 
-// Historial de mensajes por usuario
 const historial = {};
 
-const GOOGLE_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTe5bAfaAIJDsDj6Hgz43yQ7gQ9TSm77Pp-g-3zBby_PuCknOfOta_3KsQX0-ofmG7hY6zDcxU3qBcS/pub?gid=0&single=true&output=csv';
+function calcularTarifas(canon) {
+  const canonNum = parseInt(canon, 10);
+  if (isNaN(canonNum)) return null;
 
-async function consultarInmueblePorCodigo(codigoBuscado) {
-  try {
-    const response = await fetch(GOOGLE_SHEET_CSV_URL);
-    const csvText = await response.text();
-    const rows = [];
-    const readable = Readable.from([csvText]);
-    await new Promise((resolve, reject) => {
-      readable
-        .pipe(csv())
-        .on('data', (data) => rows.push(data))
-        .on('end', resolve)
-        .on('error', reject);
-    });
+  const admin = canonNum * 0.105;
+  const iva = admin * 0.19;
+  const amparo = canonNum * 0.0205;
+  const total = admin + iva + amparo;
 
-    const encontrado = rows.find(row => row.Codigo === codigoBuscado);
-    if (encontrado) {
-      return `📌 Información del inmueble ${codigoBuscado}:
+  return {
+    admin: admin.toFixed(0),
+    iva: iva.toFixed(0),
+    amparo: amparo.toFixed(0),
+    total: total.toFixed(0),
+    neto: (canonNum - total).toFixed(0)
+  };
+}
 
-🏠 Habitaciones: ${encontrado.Habitaciones}
-🛁 Baños: ${encontrado.Baños}
-💰 Valor: ${encontrado.Valor}
-🎥 Video: ${encontrado.YouTube}`;
-    } else {
-      return null;
-    }
-  } catch (error) {
-    return null;
-  }
+async function buscarInmueblePorCodigo(codigo) {
+  return new Promise((resolve, reject) => {
+    const resultados = [];
+    fs.createReadStream(GOOGLE_SHEET_CSV)
+      .pipe(csv())
+      .on('data', (data) => resultados.push(data))
+      .on('end', () => {
+        const encontrado = resultados.find(row => row.CODIGO === codigo);
+        resolve(encontrado || null);
+      })
+      .on('error', reject);
+  });
 }
 
 app.post('/api/chat', async (req, res) => {
   const { userId, pregunta } = req.body;
   if (!userId || !pregunta) return res.status(400).json({ error: "Missing fields" });
 
-  const codigoMatch = pregunta.match(/\b\d{3,}\b/);
-  if (codigoMatch) {
-    const info = await consultarInmueblePorCodigo(codigoMatch[0]);
-    if (info) {
-      return res.json({ respuesta: info });
-    }
-  }
-
-  const userHistorial = historial[userId] || [];
-  userHistorial.push({ role: "user", content: pregunta });
-
-  const mensajes = [
-    { role: "system", content: prompt },
-    ...userHistorial
-  ];
+  const historialUsuario = historial[userId] || [];
+  historialUsuario.push({ role: "user", content: pregunta });
 
   try {
+    let contextMessage = { role: "user", content: pregunta };
+
+    const matchCanon = pregunta.match(/canon.*?(\d{6,})/i);
+    if (matchCanon) {
+      const valor = matchCanon[1];
+      const calculo = calcularTarifas(valor);
+      if (calculo) {
+        contextMessage.content += ` El canon es ${valor}. Cálculo automático: Administración ${calculo.admin}, IVA ${calculo.iva}, Amparo Básico ${calculo.amparo}. Total ${calculo.total}. Neto ${calculo.neto}.`;
+      }
+    }
+
+    const matchCodigo = pregunta.match(/\b(\d{4,6})\b/);
+    if (matchCodigo) {
+      const info = await buscarInmueblePorCodigo(matchCodigo[1]);
+      if (info) {
+        contextMessage.content += ` Información del inmueble ${info.CODIGO}: ${info.DIRECCION}, ${info.ESTRATO}, ${info.HABITACIONES} habitaciones, ${info.BANOS} baños, valor ${info.VALOR}, video: ${info.YOUTUBE}`;
+      }
+    }
+
     const response = await axios.post("https://api.openai.com/v1/chat/completions", {
-      model: "gpt-4",
-      messages: mensajes
+      model: "gpt-3.5-turbo",
+      messages: [
+        { role: "system", content: prompt },
+        ...historialUsuario,
+        contextMessage
+      ]
     }, {
       headers: {
         "Content-Type": "application/json",
@@ -82,8 +90,9 @@ app.post('/api/chat', async (req, res) => {
     });
 
     const respuesta = response.data.choices[0].message.content;
-    userHistorial.push({ role: "assistant", content: respuesta });
-    historial[userId] = userHistorial;
+    historialUsuario.push({ role: "assistant", content: respuesta });
+    historial[userId] = historialUsuario.slice(-10);
+
     res.json({ respuesta });
   } catch (error) {
     res.status(500).json({ error: "Error en OpenAI", details: error.message });
