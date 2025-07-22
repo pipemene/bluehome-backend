@@ -1,24 +1,14 @@
-
 import express from 'express';
-import dotenv from 'dotenv';
-import bodyParser from 'body-parser';
-import chatHandler from './src/chatHandler.js';
-
+import cors from 'cors';
+import * as dotenv from 'dotenv';
+import { handleChat } from './src/chatHandler.js';
 dotenv.config();
+
 const app = express();
-app.use(bodyParser.json());
+app.use(cors());
+app.use(express.json());
 
-app.post('/api/chat', async (req, res) => {
-    const { userId, pregunta } = req.body;
-    try {
-        const respuesta = await chatHandler(userId, pregunta);
-        res.json({ respuesta });
-    } catch (error) {
-        res.json({ respuesta: 'Hubo un problema consultando la base de datos. Intenta nuevamente.' });
-    }
-});
+app.post('/api/chat', handleChat);
 
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-    console.log(`Servidor corriendo en puerto ${PORT}`);
-});
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Servidor corriendo en puerto ${PORT}`));
