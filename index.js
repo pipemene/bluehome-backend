@@ -1,4 +1,3 @@
-
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
@@ -61,6 +60,7 @@ app.post('/api/chat', async (req, res) => {
 
         res.json({ respuesta });
     } catch (e) {
+        console.error(e);
         res.status(500).json({ error: "Error en OpenAI", detail: e.message });
     }
 });
