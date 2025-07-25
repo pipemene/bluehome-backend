@@ -10,8 +10,9 @@ app.use(cors());
 app.use(express.json());
 
 const AUTH_TOKEN = process.env.AUTH_TOKEN || "bluehome123";
+const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTe5bAfaAIJDsDj6Hgz43yQ7gQ9TSm77Pp-g-3zBby_PuCknOfOta_3KsQX0-ofmG7hY6zDcxU3qBcS/pub?gid=0&single=true&output=csv";
 
-const promptBase = `Eres el asistente virtual de Blue Home Inmobiliaria, una empresa con sede en Palmira, Valle, en la Calle 31 #22-07 del barrio Trinidad. El gerente es Andrés Felipe Meneses y el NIT de la empresa es 1113664827. Fue fundada en enero de 2016. El teléfono fijo es 6022806940 y el correo es info@bluehomeinmo.co. Tu misión es responder de forma clara, precisa y profesional, manteniendo una conversación fluida con los clientes. Si un cliente menciona que quiere entregar su inmueble en administración, notifícalo inmediatamente al correo comercial@bluehomeinmo.co y al WhatsApp +573163121416, pero sigue con la atención normalmente en el chat, no te desligues. Si pregunta por las tarifas, ofrece hacerle una simulación pidiéndole el canon de arrendamiento. Calcula automáticamente el 10.5% + IVA sobre el canon, más el 2.05% mensual del amparo básico y un único descuento inicial del amparo integral (12.31% sobre canon + 1 SMLV). El amparo básico cubre hasta 36 meses de canon si el inquilino deja de pagar. El amparo integral cubre daños y servicios públicos hasta el valor asegurado. Usa un tono VIP para estos clientes.`;
+const promptBase = `Eres el asistente virtual de Blue Home Inmobiliaria. Si el usuario ingresa un código de inmueble, responde solo con la ficha del inmueble y no inventes nada. Si el mensaje no es un código, entonces responde normalmente como asistente de Blue Home.`
 
 const historial = {};
 
@@ -33,6 +34,34 @@ function calcularValores(canon) {
     };
 }
 
+async function buscarInmueblePorCodigo(codigo) {
+    try {
+        const response = await axios.get(GOOGLE_SHEET_CSV_URL);
+        const filas = response.data.split('\n').map(row => row.split(','));
+        const headers = filas[0];
+        const idx = headers.map(h => h.trim().toLowerCase());
+        const fila = filas.find(f => f[0] === codigo);
+        if (!fila) return null;
+
+        const data = {};
+        headers.forEach((h, i) => {
+            data[h.trim().toLowerCase()] = fila[i];
+        });
+
+        return {
+            direccion: data["direccion"] || "No disponible",
+            canon: data["canon"] || "No disponible",
+            habitaciones: data["habitaciones"] || "N/A",
+            baños: data["baños"] || "N/A",
+            parqueadero: data["parqueadero"] || "N/A",
+            youtube: data["youtube"] || ""
+        };
+    } catch (err) {
+        console.error("Error leyendo la hoja:", err.message);
+        return null;
+    }
+}
+
 app.post('/api/chat', async (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || authHeader !== `Bearer ${AUTH_TOKEN}`) {
@@ -42,7 +71,21 @@ app.post('/api/chat', async (req, res) => {
     const { userId, pregunta } = req.body;
     if (!userId || !pregunta) return res.status(400).json({ error: "Faltan campos" });
 
-    const preguntaLimpia = String(pregunta).replace(/\n/g, ' ').replace(/"/g, "'");
+    const preguntaLimpia = String(pregunta).replace(/\n/g, ' ').replace(/"/g, "'").trim();
+
+    // Si es un código numérico de 3-5 dígitos, buscar en Google Sheets
+    if (/^\d{3,5}$/.test(preguntaLimpia)) {
+        const info = await buscarInmueblePorCodigo(preguntaLimpia);
+        if (info) {
+            return res.json({
+                respuesta: `🏡 Inmueble código ${preguntaLimpia}:
+📍 Dirección: ${info.direccion}
+💰 Canon: ${info.canon}
+🛏 Habitaciones: ${info.habitaciones} | 🚽 Baños: ${info.baños} | 🚗 Parqueadero: ${info.parqueadero}
+🎥 Video: ${info.youtube ? info.youtube : "No disponible"}`
+            });
+        }
+    }
 
     historial[userId] = historial[userId] || [];
     historial[userId].push({ role: "user", content: preguntaLimpia });
