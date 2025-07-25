@@ -12,7 +12,7 @@ app.use(express.json());
 const AUTH_TOKEN = process.env.AUTH_TOKEN || "bluehome123";
 const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTe5bAfaAIJDsDj6Hgz43yQ7gQ9TSm77Pp-g-3zBby_PuCknOfOta_3KsQX0-ofmG7hY6zDcxU3qBcS/pub?gid=0&single=true&output=csv";
 
-const promptBase = `Eres el asistente virtual de Blue Home Inmobiliaria. Si el usuario escribe un código de inmueble (como 1123), primero intenta buscarlo en la base de datos de inmuebles. Si existe y está disponible, responde solo con la información real. Si el inmueble está marcado como no_disponible, indícaselo al cliente. Si no hay código, pregunta por presupuesto máximo y habitaciones requeridas y sugiere mínimo 3 inmuebles disponibles. No inventes información.`
+const promptBase = `Eres el asistente virtual de Blue Home Inmobiliaria. Si el usuario escribe un código de inmueble (como 1123), primero intenta buscarlo en la base de datos de inmuebles. Si existe y está disponible, responde solo con la información real. Si el inmueble está marcado como no_disponible, indícaselo al cliente. Si no hay código, pregunta por presupuesto máximo y habitaciones requeridas y sugiere mínimo 3 inmuebles disponibles. No inventes información.`;
 
 const historial = {};
 let propiedades = [];
@@ -40,17 +40,30 @@ async function cargarPropiedades() {
         const dataIndex = {};
         encabezados.forEach((h, i) => dataIndex[h] = i);
 
-        propiedades = filas.slice(1).map(f => ({
-            codigo: f[0],
-            enlace_youtube: f[dataIndex["enlace youtube"]],
-            enlace_ficha: f[dataIndex["enlace ficha tecnica"]],
-            habitaciones: parseInt(f[dataIndex["numero habitaciones"]]) || 0,
-            banos: f[dataIndex["numero banos"]],
-            parqueadero: f[dataIndex["parqueadero"]],
-            canon_raw: f[dataIndex["valor canon"]],
-            canon: parseFloat(limpiarMoneda(f[dataIndex["valor canon"]])) || 0,
-            estado: (f[dataIndex["estado"]] || "").toLowerCase()
-        }));
+        propiedades = [];
+        for (let i = 1; i < filas.length; i++) {
+            const f = filas[i];
+            if (f.length < encabezados.length) {
+                console.warn(`Fila ${i + 1} ignorada por tener menos columnas de las esperadas`);
+                continue;
+            }
+
+            try {
+                propiedades.push({
+                    codigo: f[0],
+                    enlace_youtube: f[dataIndex["enlace youtube"]],
+                    enlace_ficha: f[dataIndex["enlace ficha tecnica"]],
+                    habitaciones: parseInt(f[dataIndex["numero habitaciones"]]) || 0,
+                    banos: f[dataIndex["numero banos"]],
+                    parqueadero: f[dataIndex["parqueadero"]],
+                    canon_raw: f[dataIndex["valor canon"]],
+                    canon: parseFloat(limpiarMoneda(f[dataIndex["valor canon"]])) || 0,
+                    estado: (f[dataIndex["estado"]] || "").toLowerCase()
+                });
+            } catch (e) {
+                console.warn(`Fila ${i + 1} ignorada por error: ${e.message}`);
+            }
+        }
     } catch (err) {
         console.error("Error cargando propiedades:", err.message);
     }
@@ -63,10 +76,6 @@ function construirRespuestaPropiedad(p) {
     if (p.enlace_youtube) r += `\n🎥 Video: ${p.enlace_youtube}`;
     if (p.enlace_ficha) r += `\n📄 Ficha técnica: ${p.enlace_ficha}`;
     return r;
-}
-
-function esCodigo(mensaje) {
-    return /^\d{1,5}$/.test(mensaje.trim());
 }
 
 function extraerCodigo(mensaje) {
