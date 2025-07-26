@@ -12,8 +12,6 @@ app.use(express.json());
 const AUTH_TOKEN = process.env.AUTH_TOKEN || "bluehome123";
 const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTe5bAfaAIJDsDj6Hgz43yQ7gQ9TSm77Pp-g-3zBby_PuCknOfOta_3KsQX0-ofmG7hY6zDcxU3qBcS/pub?gid=0&single=true&output=csv";
 
-const promptBase = `Eres el asistente virtual de Blue Home Inmobiliaria. Si el usuario escribe un código de inmueble (como 1123), primero intenta buscarlo en la base de datos de inmuebles. Si existe y está disponible, responde solo con la información real. Si el inmueble está marcado como no_disponible, indícaselo al cliente. Si no hay código, pregunta por presupuesto máximo y habitaciones requeridas y sugiere mínimo 3 inmuebles disponibles. No inventes información.`;
-
 const historial = {};
 let propiedades = [];
 
@@ -33,8 +31,7 @@ function formatearCOP(numeroStr) {
 async function cargarPropiedades() {
     try {
         const response = await axios.get(GOOGLE_SHEET_CSV_URL);
-        const separador = response.data.includes(";") ? ";" : ",";
-        const filas = response.data.split("\n").map(row => row.split(separador).map(col => limpiarTexto(col)));
+        const filas = response.data.split("\n").map(row => row.split(",").map(col => limpiarTexto(col)));
 
         const encabezados = filas[0].map(h => h.toLowerCase());
         const dataIndex = {};
@@ -43,10 +40,7 @@ async function cargarPropiedades() {
         propiedades = [];
         for (let i = 1; i < filas.length; i++) {
             const f = filas[i];
-            if (f.length < encabezados.length) {
-                console.warn(`Fila ${i + 1} ignorada por tener menos columnas de las esperadas`);
-                continue;
-            }
+            if (f.length < encabezados.length) continue;
 
             try {
                 propiedades.push({
@@ -58,11 +52,9 @@ async function cargarPropiedades() {
                     parqueadero: f[dataIndex["parqueadero"]],
                     canon_raw: f[dataIndex["valor canon"]],
                     canon: parseFloat(limpiarMoneda(f[dataIndex["valor canon"]])) || 0,
-                    estado: (f[dataIndex["estado"]] || "").toLowerCase()
+                    estado: limpiarTexto(f[dataIndex["estado"]]).toLowerCase()
                 });
-            } catch (e) {
-                console.warn(`Fila ${i + 1} ignorada por error: ${e.message}`);
-            }
+            } catch {}
         }
     } catch (err) {
         console.error("Error cargando propiedades:", err.message);
@@ -93,9 +85,11 @@ app.post('/api/chat', async (req, res) => {
     if (!userId || !pregunta) return res.status(400).json({ error: "Faltan campos" });
 
     await cargarPropiedades();
-
     const mensaje = limpiarTexto(pregunta);
     const codigo = extraerCodigo(mensaje);
+
+    historial[userId] = historial[userId] || { estado: "inicio", data: {} };
+    const contexto = historial[userId];
 
     if (codigo) {
         const p = propiedades.find(p => p.codigo === codigo);
@@ -104,19 +98,29 @@ app.post('/api/chat', async (req, res) => {
         return res.json({ respuesta: construirRespuestaPropiedad(p) });
     }
 
-    const historialUsuario = historial[userId] || [];
-    historial[userId] = historialUsuario;
+    if (contexto.estado === "inicio") {
+        contexto.estado = "esperando_presupuesto";
+        return res.json({ respuesta: "¿Cuál es tu presupuesto máximo de arriendo?" });
+    }
 
-    historialUsuario.push({ role: "user", content: mensaje });
+    if (contexto.estado === "esperando_presupuesto") {
+        const valor = mensaje.replace(/[.$,]/g, "").match(/\d+/);
+        if (!valor) return res.json({ respuesta: "No entendí el valor. ¿Podrías escribir el número sin palabras?" });
+        contexto.data.presupuesto = parseInt(valor[0]);
+        contexto.estado = "esperando_habitaciones";
+        return res.json({ respuesta: "¿Cuántas habitaciones necesitas?" });
+    }
 
-    const ultima = historialUsuario[historialUsuario.length - 1].content.toLowerCase();
+    if (contexto.estado === "esperando_habitaciones") {
+        const num = mensaje.match(/\d+/);
+        if (!num) return res.json({ respuesta: "¿Podrías indicarme cuántas habitaciones necesitas?" });
+        contexto.data.habitaciones = parseInt(num[0]);
+        contexto.estado = "completo";
+    }
 
-    if (ultima.includes("mill") || ultima.includes("$") || ultima.includes("habitac")) {
-        const matchCanon = ultima.match(/\$?(\d+[.,]?\d{0,3})/g);
-        const matchHab = ultima.match(/(\d+)\s*habitac/);
-
-        const presupuesto = matchCanon ? parseFloat(matchCanon[0].replace(/[.$,]/g, "")) : 0;
-        const minHab = matchHab ? parseInt(matchHab[1]) : 1;
+    if (contexto.estado === "completo") {
+        const presupuesto = contexto.data.presupuesto;
+        const minHab = contexto.data.habitaciones;
 
         const resultados = propiedades
             .filter(p => p.estado === "disponible" && p.habitaciones >= minHab && p.canon <= presupuesto)
@@ -127,11 +131,12 @@ app.post('/api/chat', async (req, res) => {
         }
 
         const respuesta = resultados.map(p => construirRespuestaPropiedad(p)).join("\n\n");
+        contexto.estado = "inicio";
+        contexto.data = {};
         return res.json({ respuesta });
     }
 
-    historialUsuario.push({ role: "assistant", content: "¿Cuál es tu presupuesto máximo de arriendo y cuántas habitaciones necesitas?" });
-    return res.json({ respuesta: "¿Cuál es tu presupuesto máximo de arriendo y cuántas habitaciones necesitas?" });
+    return res.json({ respuesta: "¿Cómo puedo ayudarte hoy?" });
 });
 
 const PORT = process.env.PORT || 3000;
