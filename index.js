@@ -1,26 +1,39 @@
 import express from 'express';
+import cors from 'cors';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
-import fetch from 'node-fetch';
+import { OpenAI } from 'openai';
 import dotenv from 'dotenv';
 import bodyParser from 'body-parser';
-import { OpenAI } from 'openai';
+import { readCSV } from './utils/readCSV.js';
+import { handleChat } from './utils/handleChat.js';
 
 dotenv.config();
 const app = express();
+app.use(cors());
 app.use(bodyParser.json());
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let conversations = {};
 
 app.post('/api/chat', async (req, res) => {
-  const { messages } = req.body;
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4",
-    messages,
-  });
-  res.json(completion.choices[0].message);
+  const { message, user } = req.body;
+  if (!message || !user) return res.status(400).send('Faltan parámetros');
+
+  if (message.trim().toLowerCase() === 'test') {
+    conversations[user] = [];
+    return res.send({ reply: '¡Conversación reiniciada!' });
+  }
+
+  res.send({ reply: 'Procesando...' });
+
+  try {
+    const db = await readCSV(process.env.GSHEET_CSV_URL);
+    const reply = await handleChat(message, user, conversations, db);
+    // Aquí deberías hacer POST a ManyChat webhook con el reply si es necesario
+  } catch (e) {
+    console.error('Error:', e);
+  }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(3000, () => {
+  console.log('Servidor iniciado en puerto 3000');
 });
