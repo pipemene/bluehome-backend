@@ -1,90 +1,78 @@
 import express from 'express';
-import dotenv from 'dotenv';
 import bodyParser from 'body-parser';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
-import { Configuration, OpenAIApi } from 'openai';
+import { OpenAI } from 'openai';
+import dotenv from 'dotenv';
 import fetch from 'node-fetch';
-import fs from 'fs';
 
 dotenv.config();
-
 const app = express();
 app.use(bodyParser.json());
 
-const doc = new GoogleSpreadsheet(process.env.SHEET_ID);
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const configuration = new Configuration({ apiKey: OPENAI_API_KEY });
-const openai = new OpenAIApi(configuration);
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const history = {};
-
-async function fetchSheetRows() {
-    await doc.useServiceAccountAuth({
-        client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-        private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\n/g, '\n')
-    });
-    await doc.loadInfo();
-    const sheet = doc.sheetsByIndex[0];
-    const rows = await sheet.getRows();
-    return rows;
+const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID);
+async function loadGoogleSheet() {
+  await doc.useApiKey(process.env.GOOGLE_SHEET_API_KEY);
+  await doc.loadInfo();
+  return doc.sheetsByIndex[0];
 }
+
+let userContexts = {};
 
 function resetContext(userId) {
-    history[userId] = [];
+  userContexts[userId] = [];
 }
 
-function addToHistory(userId, role, content) {
-    if (!history[userId]) history[userId] = [];
-    history[userId].push({ role, content });
+function addToContext(userId, role, content) {
+  if (!userContexts[userId]) userContexts[userId] = [];
+  userContexts[userId].push({ role, content });
+  if (userContexts[userId].length > 20) userContexts[userId].shift(); // limit history
 }
 
 app.post('/api/chat', async (req, res) => {
-    const { userId, message } = req.body;
+  const { message, user_id } = req.body;
+  if (!message || !user_id) return res.status(400).send('Missing params');
 
-    if (message.toLowerCase().trim() === 'test') {
-        resetContext(userId);
-        return res.json({ reply: '¡Conversación reiniciada! ¿En qué puedo ayudarte?' });
-    }
+  if (message.toLowerCase() === 'test') {
+    resetContext(user_id);
+    return res.json({ reply: 'Contexto reiniciado. ¿En qué puedo ayudarte hoy?' });
+  }
 
-    const rows = await fetchSheetRows();
-    const lowerMessage = message.toLowerCase();
+  addToContext(user_id, 'user', message);
 
-    // Buscar código exacto
-    const matched = rows.find(row => row.codigo?.toString().toLowerCase() === lowerMessage);
-    if (matched) {
-        if (matched.ESTADO === 'no_disponible') {
-            return res.json({ reply: `El inmueble con código ${matched.codigo} actualmente no está disponible.
-¿Tienes alguna duda?` });
-        }
-        return res.json({ reply:
-            `🏠 Código ${matched.codigo}:
-` +
-            `- Habitaciones: ${matched['numero habitaciones']}
-` +
-            `- Baños: ${matched['numero banos']}
-` +
-            `- Parqueadero: ${matched['parqueadero']}
-` +
-            `- Canon: ${matched['valor canon']}
-` +
-            `🎥 Video: ${matched['enlace youtube']}
+  const sheet = await loadGoogleSheet();
+  const rows = await sheet.getRows();
 
-¿Tienes alguna duda?` });
-    }
+  const found = rows.find(row => row.codigo === message.trim());
+  if (found && found.ESTADO !== 'no_disponible') {
+    const info = `✅ Inmueble encontrado:
+- Canon: ${found['valor canon']}
+- Habitaciones: ${found['numero habitaciones']}
+- Baños: ${found['numero banos']}
+- Parqueadero: ${found['parqueadero']}
+🎥 Video: ${found['enlace youtube']}`;
+    addToContext(user_id, 'assistant', info);
+    return res.json({ reply: info });
+  }
 
-    addToHistory(userId, 'user', message);
+  const prompt = [
+    { role: 'system', content: process.env.BLUEHOME_PROMPT },
+    ...userContexts[user_id],
+  ];
 
-    const completion = await openai.createChatCompletion({
-        model: 'gpt-4',
-        messages: [{ role: 'system', content: 'Eres el asistente de Blue Home Inmobiliaria. Solo responde con información real.' }, ...history[userId]]
+  try {
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: prompt,
     });
-
-    const reply = completion.data.choices[0].message.content;
-    addToHistory(userId, 'assistant', reply);
-
+    const reply = completion.choices[0].message.content;
+    addToContext(user_id, 'assistant', reply);
     res.json({ reply });
+  } catch (e) {
+    console.error(e);
+    res.status(500).send('Error generando respuesta');
+  }
 });
 
-app.listen(3000, () => {
-    console.log('Servidor backend Blue Home corriendo en puerto 3000');
-});
+app.listen(3000, () => console.log('✅ Servidor corriendo en puerto 3000'));
