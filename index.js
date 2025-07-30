@@ -1,143 +1,104 @@
 
 import express from 'express';
-import cors from 'cors';
+import bodyParser from 'body-parser';
+import dotenv from 'dotenv';
 import axios from 'axios';
-import * as dotenv from 'dotenv';
+import { parse } from 'csv-parse/sync';
+import fetch from 'node-fetch';
+
 dotenv.config();
-
 const app = express();
-app.use(cors());
-app.use(express.json());
+app.use(bodyParser.json());
 
-const AUTH_TOKEN = process.env.AUTH_TOKEN || "bluehome123";
-const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTe5bAfaAIJDsDj6Hgz43yQ7gQ9TSm77Pp-g-3zBby_PuCknOfOta_3KsQX0-ofmG7hY6zDcxU3qBcS/pub?gid=0&single=true&output=csv";
+const GOOGLE_SHEET_URL = process.env.GOOGLE_SHEET_URL;
+const MANYCHAT_API_KEY = process.env.MANYCHAT_API_KEY;
+const MANYCHAT_CUSTOMER_FIELD = process.env.MANYCHAT_CUSTOMER_FIELD || 'usuario';
 
-const historial = {};
-let propiedades = [];
+const PORT = process.env.PORT || 3000;
 
-function limpiarTexto(texto) {
-    return String(texto || "").trim().replace(/\r|\n|\t/g, "");
+function cleanNumber(value) {
+  if (!value) return null;
+  const number = parseInt(value.toString().replace(/[^0-9]/g, ''));
+  return isNaN(number) ? null : number;
 }
 
-function limpiarMoneda(valor) {
-    return valor.replace(/["$]/g, "").replace(/,/g, "").trim();
+function buildResponseFromRow(row) {
+  const enlace = row['enlace youtube']?.trim();
+  const ficha = row['ENLACE FICHA TECNICA']?.trim();
+  return `🏠 *${row['tipo']?.toUpperCase() || 'INMUEBLE'}*
+
+- Habitaciones: ${row['numero habitaciones']}
+- Baños: ${row['numero banos']}
+- Parqueadero: ${row['parqueadero']}
+- Canon: ${row['valor canon']}
+
+📄 [Ficha técnica](${ficha})
+🎥 [Ver video](${enlace})`;
 }
 
-function formatearCOP(numeroStr) {
-    const num = parseFloat(numeroStr);
-    return isNaN(num) ? "No disponible" : `$${num.toLocaleString("es-CO")}`;
+async function fetchSheetData() {
+  const res = await fetch(GOOGLE_SHEET_URL);
+  const csv = await res.text();
+  const records = parse(csv, {
+    columns: true,
+    skip_empty_lines: true,
+  });
+  return records;
 }
 
-async function cargarPropiedades() {
-    try {
-        const response = await axios.get(GOOGLE_SHEET_CSV_URL);
-        const filas = response.data.split("\n").map(row => row.split(",").map(col => limpiarTexto(col)));
-
-        const encabezados = filas[0].map(h => h.toLowerCase());
-        const dataIndex = {};
-        encabezados.forEach((h, i) => dataIndex[h] = i);
-
-        propiedades = [];
-        for (let i = 1; i < filas.length; i++) {
-            const f = filas[i];
-            if (f.length < encabezados.length) continue;
-
-            try {
-                propiedades.push({
-                    codigo: f[0],
-                    enlace_youtube: f[dataIndex["enlace youtube"]],
-                    enlace_ficha: f[dataIndex["enlace ficha tecnica"]],
-                    habitaciones: parseInt(f[dataIndex["numero habitaciones"]]) || 0,
-                    banos: f[dataIndex["numero banos"]],
-                    parqueadero: f[dataIndex["parqueadero"]],
-                    canon_raw: f[dataIndex["valor canon"]],
-                    canon: parseFloat(limpiarMoneda(f[dataIndex["valor canon"]])) || 0,
-                    estado: limpiarTexto(f[dataIndex["estado"]]).toLowerCase()
-                });
-            } catch {}
-        }
-    } catch (err) {
-        console.error("Error cargando propiedades:", err.message);
-    }
+function findMatchingRow(records, code) {
+  return records.find(r => r.codigo?.toString().trim() === code.toString().trim());
 }
 
-function construirRespuestaPropiedad(p) {
-    let r = `🏡 Inmueble código ${p.codigo}:
-📍 Canon: ${formatearCOP(p.canon)}
-🛏 Habitaciones: ${p.habitaciones} | 🚽 Baños: ${p.banos} | 🚗 Parqueadero: ${p.parqueadero}`;
-    if (p.enlace_youtube) r += `\n🎥 Video: ${p.enlace_youtube}`;
-    if (p.enlace_ficha) r += `\n📄 Ficha técnica: ${p.enlace_ficha}`;
-    return r;
+function findSuggestions(records, tipo, presupuesto, habitaciones) {
+  const disponibles = records.filter(r => (r.ESTADO?.trim().toLowerCase() === 'disponible'));
+  return disponibles.filter(r => {
+    const canon = cleanNumber(r['valor canon']);
+    const tipoOk = r.tipo?.toLowerCase().trim() === tipo.toLowerCase().trim();
+    const canonOk = canon && presupuesto >= canon;
+    const habOk = !habitaciones || parseInt(r['numero habitaciones']) >= parseInt(habitaciones);
+    return tipoOk && canonOk && habOk;
+  }).slice(0, 3);
 }
 
-function extraerCodigo(mensaje) {
-    const match = mensaje.match(/\b(\d{1,5})\b/);
-    return match ? match[1] : null;
+async function sendToManyChat(userId, message) {
+  try {
+    await axios.post('https://api.manychat.com/fb/sending/sendContent', {
+      subscriber_id: userId,
+      message: { text: message },
+    }, {
+      headers: {
+        Authorization: `Bearer ${MANYCHAT_API_KEY}`,
+        'Content-Type': 'application/json',
+      }
+    });
+  } catch (error) {
+    console.error('Error al enviar a ManyChat:', error?.response?.data || error.message);
+  }
 }
 
 app.post('/api/chat', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || authHeader !== `Bearer ${AUTH_TOKEN}`) {
-        return res.status(401).json({ error: "No autorizado" });
+  const { messages, [MANYCHAT_CUSTOMER_FIELD]: userId } = req.body;
+
+  res.json({ reply: "🔍 Dame un momento mientras consulto la información..." });
+
+  const records = await fetchSheetData();
+  const lastMessage = messages[messages.length - 1]?.content || "";
+  const possibleCode = lastMessage.match(/\b\d{1,4}\b/);
+  const code = possibleCode?.[0];
+
+  if (code) {
+    const inmueble = findMatchingRow(records, code);
+    const estado = inmueble?.ESTADO?.trim().toLowerCase();
+    if (!inmueble || estado !== 'disponible') {
+      await sendToManyChat(userId, "Este inmueble ya no se encuentra disponible.");
+    } else {
+      const respuesta = buildResponseFromRow(inmueble);
+      await sendToManyChat(userId, respuesta);
     }
-
-    const { userId, pregunta } = req.body;
-    if (!userId || !pregunta) return res.status(400).json({ error: "Faltan campos" });
-
-    await cargarPropiedades();
-    const mensaje = limpiarTexto(pregunta);
-    const codigo = extraerCodigo(mensaje);
-
-    historial[userId] = historial[userId] || { estado: "inicio", data: {} };
-    const contexto = historial[userId];
-
-    if (codigo) {
-        const p = propiedades.find(p => p.codigo === codigo);
-        if (!p) return res.json({ respuesta: `No encontramos información para el código ${codigo}.` });
-        if (p.estado !== "disponible") return res.json({ respuesta: `El inmueble con código ${codigo} actualmente no está disponible.` });
-        return res.json({ respuesta: construirRespuestaPropiedad(p) });
-    }
-
-    if (contexto.estado === "inicio") {
-        contexto.estado = "esperando_presupuesto";
-        return res.json({ respuesta: "¿Cuál es tu presupuesto máximo de arriendo?" });
-    }
-
-    if (contexto.estado === "esperando_presupuesto") {
-        const valor = mensaje.replace(/[\s$.,]/g, "").match(/\d+/);
-        if (!valor) return res.json({ respuesta: "No entendí el valor. ¿Podrías escribir solo el número?" });
-        contexto.data.presupuesto = parseInt(valor[0]);
-        contexto.estado = "esperando_habitaciones";
-        return res.json({ respuesta: "¿Cuántas habitaciones necesitas?" });
-    }
-
-    if (contexto.estado === "esperando_habitaciones") {
-        const num = mensaje.match(/\d+/);
-        if (!num) return res.json({ respuesta: "¿Podrías indicarme cuántas habitaciones necesitas?" });
-        contexto.data.habitaciones = parseInt(num[0]);
-        contexto.estado = "completo";
-    }
-
-    if (contexto.estado === "completo") {
-        const presupuesto = contexto.data.presupuesto;
-        const minHab = contexto.data.habitaciones;
-
-        const resultados = propiedades
-            .filter(p => p.estado === "disponible" && p.habitaciones >= minHab && p.canon <= presupuesto)
-            .slice(0, 3);
-
-        if (resultados.length === 0) {
-            return res.json({ respuesta: `No encontramos inmuebles disponibles con ese presupuesto y número de habitaciones.` });
-        }
-
-        const respuesta = resultados.map(p => construirRespuestaPropiedad(p)).join("\n\n");
-        contexto.estado = "inicio";
-        contexto.data = {};
-        return res.json({ respuesta });
-    }
-
-    return res.json({ respuesta: "¿Cómo puedo ayudarte hoy?" });
+  } else {
+    await sendToManyChat(userId, "Por favor, indícame el tipo de inmueble que buscas: *casa*, *apartamento*, *apartaestudio* o *local*.");
+  }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("Servidor corriendo en puerto " + PORT));
+app.listen(PORT, () => console.log(`Servidor BlueHome funcionando en el puerto ${PORT}`));
