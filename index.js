@@ -1,104 +1,109 @@
 
-import express from 'express';
-import bodyParser from 'body-parser';
-import dotenv from 'dotenv';
-import axios from 'axios';
-import { parse } from 'csv-parse/sync';
-import fetch from 'node-fetch';
+import express from "express";
+import dotenv from "dotenv";
+import bodyParser from "body-parser";
+import { GoogleSpreadsheet } from "google-spreadsheet";
+import OpenAI from "openai";
+import fetch from "node-fetch";
 
 dotenv.config();
 const app = express();
 app.use(bodyParser.json());
 
-const GOOGLE_SHEET_URL = process.env.GOOGLE_SHEET_URL;
-const MANYCHAT_API_KEY = process.env.MANYCHAT_API_KEY;
-const MANYCHAT_CUSTOMER_FIELD = process.env.MANYCHAT_CUSTOMER_FIELD || 'usuario';
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const PORT = process.env.PORT || 3000;
+const doc = new GoogleSpreadsheet(process.env.SHEET_ID);
+const contextMemory = {};
 
-function cleanNumber(value) {
-  if (!value) return null;
-  const number = parseInt(value.toString().replace(/[^0-9]/g, ''));
-  return isNaN(number) ? null : number;
+async function loadGoogleSheet() {
+    await doc.useApiKey(process.env.GOOGLE_API_KEY);
+    await doc.loadInfo();
+    const sheet = doc.sheetsByIndex[0];
+    const rows = await sheet.getRows();
+    return rows.map(row => ({
+        codigo: row["codigo"],
+        enlace_youtube: row["enlace youtube"],
+        enlace_ficha: row["ENLACE FICHA TECNICA"],
+        habitaciones: row["numero habitaciones"],
+        banos: row["numero banos"],
+        parqueadero: row["parqueadero"],
+        canon: row["valor canon"],
+        estado: row["ESTADO"],
+        tipo: row["tipo"]
+    }));
 }
 
-function buildResponseFromRow(row) {
-  const enlace = row['enlace youtube']?.trim();
-  const ficha = row['ENLACE FICHA TECNICA']?.trim();
-  return `🏠 *${row['tipo']?.toUpperCase() || 'INMUEBLE'}*
-
-- Habitaciones: ${row['numero habitaciones']}
-- Baños: ${row['numero banos']}
-- Parqueadero: ${row['parqueadero']}
-- Canon: ${row['valor canon']}
-
-📄 [Ficha técnica](${ficha})
-🎥 [Ver video](${enlace})`;
+function resetUserContext(userId) {
+    contextMemory[userId] = [];
 }
 
-async function fetchSheetData() {
-  const res = await fetch(GOOGLE_SHEET_URL);
-  const csv = await res.text();
-  const records = parse(csv, {
-    columns: true,
-    skip_empty_lines: true,
-  });
-  return records;
-}
-
-function findMatchingRow(records, code) {
-  return records.find(r => r.codigo?.toString().trim() === code.toString().trim());
-}
-
-function findSuggestions(records, tipo, presupuesto, habitaciones) {
-  const disponibles = records.filter(r => (r.ESTADO?.trim().toLowerCase() === 'disponible'));
-  return disponibles.filter(r => {
-    const canon = cleanNumber(r['valor canon']);
-    const tipoOk = r.tipo?.toLowerCase().trim() === tipo.toLowerCase().trim();
-    const canonOk = canon && presupuesto >= canon;
-    const habOk = !habitaciones || parseInt(r['numero habitaciones']) >= parseInt(habitaciones);
-    return tipoOk && canonOk && habOk;
-  }).slice(0, 3);
-}
-
-async function sendToManyChat(userId, message) {
-  try {
-    await axios.post('https://api.manychat.com/fb/sending/sendContent', {
-      subscriber_id: userId,
-      message: { text: message },
-    }, {
-      headers: {
-        Authorization: `Bearer ${MANYCHAT_API_KEY}`,
-        'Content-Type': 'application/json',
-      }
-    });
-  } catch (error) {
-    console.error('Error al enviar a ManyChat:', error?.response?.data || error.message);
-  }
-}
-
-app.post('/api/chat', async (req, res) => {
-  const { messages, [MANYCHAT_CUSTOMER_FIELD]: userId } = req.body;
-
-  res.json({ reply: "🔍 Dame un momento mientras consulto la información..." });
-
-  const records = await fetchSheetData();
-  const lastMessage = messages[messages.length - 1]?.content || "";
-  const possibleCode = lastMessage.match(/\b\d{1,4}\b/);
-  const code = possibleCode?.[0];
-
-  if (code) {
-    const inmueble = findMatchingRow(records, code);
-    const estado = inmueble?.ESTADO?.trim().toLowerCase();
-    if (!inmueble || estado !== 'disponible') {
-      await sendToManyChat(userId, "Este inmueble ya no se encuentra disponible.");
-    } else {
-      const respuesta = buildResponseFromRow(inmueble);
-      await sendToManyChat(userId, respuesta);
+function getUserContext(userId) {
+    if (!contextMemory[userId]) {
+        contextMemory[userId] = [];
     }
-  } else {
-    await sendToManyChat(userId, "Por favor, indícame el tipo de inmueble que buscas: *casa*, *apartamento*, *apartaestudio* o *local*.");
-  }
+    return contextMemory[userId];
+}
+
+app.post("/api/chat", async (req, res) => {
+    const { userId, pregunta } = req.body;
+    res.status(200).json({ message: "Procesando..." });
+
+    try {
+        if (pregunta.toLowerCase().trim() === "test") {
+            resetUserContext(userId);
+            await sendToManyChat(userId, "¡Hola! Soy marianAI, ¿en qué puedo ayudarte?");
+            return;
+        }
+
+        const rows = await loadGoogleSheet();
+        const codigos = rows.map(r => r.codigo.toLowerCase());
+        const matchCodigo = codigos.find(c => pregunta.toLowerCase().includes(c));
+
+        if (matchCodigo) {
+            const row = rows.find(r => r.codigo.toLowerCase() === matchCodigo);
+            if (row.estado !== "disponible") {
+                await sendToManyChat(userId, `El inmueble con código ${matchCodigo} actualmente no está disponible.`);
+                return;
+            } else {
+                const info = `Este inmueble tiene ${row.habitaciones} habitaciones, ${row.banos} baños, parqueadero ${row.parqueadero == "1" ? "sí" : "no"}, y un canon de ${row.canon}. Mira el video aquí: ${row.enlace_youtube}`;
+                await sendToManyChat(userId, info);
+                return;
+            }
+        }
+
+        const context = getUserContext(userId);
+        context.push({ role: "user", content: pregunta });
+
+        const completion = await openai.chat.completions.create({
+            model: "gpt-4",
+            messages: [
+                { role: "system", content: process.env.SYSTEM_PROMPT },
+                ...context
+            ],
+        });
+
+        const respuesta = completion.choices[0].message.content;
+        context.push({ role: "assistant", content: respuesta });
+
+        await sendToManyChat(userId, respuesta);
+    } catch (error) {
+        await sendToManyChat(userId, "Lo siento, ocurrió un error procesando tu solicitud.");
+    }
 });
 
-app.listen(PORT, () => console.log(`Servidor BlueHome funcionando en el puerto ${PORT}`));
+async function sendToManyChat(userId, mensaje) {
+    await fetch("https://api.manychat.com/fb/sending/sendContent", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${process.env.MANYCHAT_API_KEY}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            subscriber_id: userId,
+            data: { version: "v2", content: { messages: [{ type: "text", text: mensaje }] } }
+        })
+    });
+}
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Servidor corriendo en puerto ${PORT}`));
