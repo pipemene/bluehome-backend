@@ -1,68 +1,90 @@
-
 import express from 'express';
+import dotenv from 'dotenv';
 import bodyParser from 'body-parser';
 import { GoogleSpreadsheet } from 'google-spreadsheet';
-import OpenAI from 'openai';
-import dotenv from 'dotenv';
+import { Configuration, OpenAIApi } from 'openai';
 import fetch from 'node-fetch';
+import fs from 'fs';
 
 dotenv.config();
 
 const app = express();
 app.use(bodyParser.json());
 
-const PORT = process.env.PORT || 3000;
-
 const doc = new GoogleSpreadsheet(process.env.SHEET_ID);
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const configuration = new Configuration({ apiKey: OPENAI_API_KEY });
+const openai = new OpenAIApi(configuration);
 
-const contextHistory = new Map();
+const history = {};
 
-function resetContextForUser(userId) {
-  contextHistory.set(userId, []);
+async function fetchSheetRows() {
+    await doc.useServiceAccountAuth({
+        client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+        private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\n/g, '\n')
+    });
+    await doc.loadInfo();
+    const sheet = doc.sheetsByIndex[0];
+    const rows = await sheet.getRows();
+    return rows;
+}
+
+function resetContext(userId) {
+    history[userId] = [];
+}
+
+function addToHistory(userId, role, content) {
+    if (!history[userId]) history[userId] = [];
+    history[userId].push({ role, content });
 }
 
 app.post('/api/chat', async (req, res) => {
-  const { message, user_id } = req.body;
+    const { userId, message } = req.body;
 
-  if (!message || !user_id) {
-    return res.status(400).json({ error: 'Missing message or user_id' });
-  }
+    if (message.toLowerCase().trim() === 'test') {
+        resetContext(userId);
+        return res.json({ reply: '¡Conversación reiniciada! ¿En qué puedo ayudarte?' });
+    }
 
-  if (message.trim().toLowerCase() === "test") {
-    resetContextForUser(user_id);
-    return res.status(200).json({ message: "Se reinició el contexto de la conversación." });
-  }
+    const rows = await fetchSheetRows();
+    const lowerMessage = message.toLowerCase();
 
-  res.status(200).json({ message: "Procesando tu solicitud..." });
+    // Buscar código exacto
+    const matched = rows.find(row => row.codigo?.toString().toLowerCase() === lowerMessage);
+    if (matched) {
+        if (matched.ESTADO === 'no_disponible') {
+            return res.json({ reply: `El inmueble con código ${matched.codigo} actualmente no está disponible.
+¿Tienes alguna duda?` });
+        }
+        return res.json({ reply:
+            `🏠 Código ${matched.codigo}:
+` +
+            `- Habitaciones: ${matched['numero habitaciones']}
+` +
+            `- Baños: ${matched['numero banos']}
+` +
+            `- Parqueadero: ${matched['parqueadero']}
+` +
+            `- Canon: ${matched['valor canon']}
+` +
+            `🎥 Video: ${matched['enlace youtube']}
 
-  try {
-    const history = contextHistory.get(user_id) || [];
-    history.push({ role: 'user', content: message });
+¿Tienes alguna duda?` });
+    }
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4',
-      messages: [
-        { role: "system", content: "Eres el asistente de Blue Home Inmobiliaria..." },
-        ...history,
-      ],
+    addToHistory(userId, 'user', message);
+
+    const completion = await openai.createChatCompletion({
+        model: 'gpt-4',
+        messages: [{ role: 'system', content: 'Eres el asistente de Blue Home Inmobiliaria. Solo responde con información real.' }, ...history[userId]]
     });
 
-    const reply = completion.choices[0].message.content;
-    history.push({ role: 'assistant', content: reply });
-    contextHistory.set(user_id, history);
+    const reply = completion.data.choices[0].message.content;
+    addToHistory(userId, 'assistant', reply);
 
-    await fetch(process.env.MANYCHAT_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id, message: reply })
-    });
-
-  } catch (error) {
-    console.error("Error en el backend:", error.message);
-  }
+    res.json({ reply });
 });
 
-app.listen(PORT, () => {
-  console.log(`Servidor iniciado en puerto ${PORT}`);
+app.listen(3000, () => {
+    console.log('Servidor backend Blue Home corriendo en puerto 3000');
 });
