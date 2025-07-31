@@ -1,109 +1,107 @@
-import express from 'express';
-import bodyParser from 'body-parser';
-import fetch from 'node-fetch';
-import { GoogleSpreadsheet } from 'google-spreadsheet';
-import OpenAI from 'openai';
-import dotenv from 'dotenv';
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+import bodyParser from "body-parser";
+import { GoogleSpreadsheet } from "google-spreadsheet";
+import { ChatOpenAI } from "@langchain/openai";
+import { BufferMemory } from "langchain/memory";
+import { ConversationChain } from "langchain/chains";
 
 dotenv.config();
-
 const app = express();
+app.use(cors());
 app.use(bodyParser.json());
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const PORT = process.env.PORT || 3000;
 
 const doc = new GoogleSpreadsheet(process.env.SHEET_ID);
-let sheetData = [];
+let rows = [];
 
-async function loadSheetData() {
+async function loadSheet() {
   try {
-    await doc.useApiKey(process.env.GOOGLE_API_KEY);
+    await doc.useServiceAccountAuth({
+      client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+      private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\n/g, "
+"),
+    });
     await doc.loadInfo();
     const sheet = doc.sheetsByIndex[0];
-    const rows = await sheet.getRows();
-    sheetData = rows.map(row => row._rawData);
-  } catch (err) {
-    console.error('Error loading Google Sheet:', err);
+    rows = await sheet.getRows();
+    console.log("Google Sheet cargado con", rows.length, "filas.");
+  } catch (error) {
+    console.error("Error cargando Google Sheet:", error);
   }
 }
-await loadSheetData();
+loadSheet();
 
-const userContexts = {};
+const memoryMap = new Map();
 
-function resetContext(name) {
-  userContexts[name] = [];
-}
-
-function getContext(name) {
-  return userContexts[name] || [];
-}
-
-function addToContext(name, role, content) {
-  if (!userContexts[name]) userContexts[name] = [];
-  userContexts[name].push({ role, content });
-  if (userContexts[name].length > 10) userContexts[name].shift();
-}
-
-app.post('/api/chat', async (req, res) => {
-  const { message, name } = req.body;
-
-  res.status(200).send({ status: 'Procesando...' });
-
-  if (!name || !message) return;
-
-  if (message.trim().toLowerCase() === 'test') {
-    resetContext(name);
-    return;
+function getMemoryForUser(userId) {
+  if (!memoryMap.has(userId)) {
+    memoryMap.set(userId, new BufferMemory({ returnMessages: true, memoryKey: "chat_history" }));
   }
+  return memoryMap.get(userId);
+}
 
-  const match = message.match(/^\d{1,4}$/);
-  if (match) {
-    const code = match[0];
-    const headers = sheetData[0];
-    const idx = sheetData.findIndex(r => r[0] === code && r[headers.indexOf('ESTADO')] === 'disponible');
-    if (idx !== -1) {
-      const row = sheetData[idx];
-      const response = `🏡 Inmueble ${code} disponible:
-- Habitaciones: ${row[headers.indexOf('numero habitaciones')]}
-- Baños: ${row[headers.indexOf('numero banos')]}
-- Parqueadero: ${row[headers.indexOf('parqueadero')]}
-- Valor: ${row[headers.indexOf('valor canon')]}
-🎥 Video: ${row[headers.indexOf('enlace youtube')]}`;
-      return await fetch(process.env.MANYCHAT_WEBHOOK, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: response, name }),
-      });
-    }
-  }
+const model = new ChatOpenAI({
+  temperature: 0.4,
+  openAIApiKey: process.env.OPENAI_API_KEY,
+  modelName: "gpt-4o",
+});
 
-  addToContext(name, 'user', message);
-  const context = getContext(name);
-  const systemPrompt = { role: 'system', content: process.env.BLUEHOME_PROMPT };
-  const messages = [systemPrompt, ...context];
+const systemPrompt = `
+Eres un asistente de Blue Home Inmobiliaria, experto en arrendamientos en Palmira y Cali.
+- Si te preguntan por un inmueble, consulta el código en la hoja de cálculo cargada.
+- Si el inmueble no está disponible, informa que no está disponible.
+- Si el inmueble está disponible, responde con habitaciones, baños, parqueadero, canon y link de YouTube.
+- Si no dan código, pregunta tipo de inmueble, presupuesto y habitaciones, y luego sugiere 3 disponibles.
+- Tarifas: 10.45% + IVA por administración. Seguro básico 2.05%. Amparo integral 12.31% sobre canon + 1 SMMLV.
+`;
+
+app.post("/api/chat", async (req, res) => {
+  const { mensaje, usuario } = req.body;
 
   try {
-    const chatCompletion = await openai.chat.completions.create({
-      model: 'gpt-4',
-      messages,
+    const memoria = getMemoryForUser(usuario);
+
+    // Revisión de código de inmueble
+    const codigo = mensaje.trim().match(/^\d{1,4}$/)?.[0];
+    if (codigo) {
+      const row = rows.find(r => r.codigo === codigo);
+      if (!row) {
+        return res.json({ respuesta: `No encontré ningún inmueble con el código ${codigo}.` });
+      }
+      if (row.ESTADO === "no_disponible") {
+        return res.json({ respuesta: `El inmueble con código ${codigo} actualmente no está disponible.` });
+      }
+
+      const respuesta = `🏠 Inmueble disponible:
+- Habitaciones: ${row["numero habitaciones"]}
+- Baños: ${row["numero banos"]}
+- Parqueadero: ${row["parqueadero"]}
+- Valor del canon: ${row["valor canon"]}
+🎥 Mira el video: ${row["enlace youtube"]}`;
+      return res.json({ respuesta });
+    }
+
+    const chain = new ConversationChain({
+      llm: model,
+      memory: memoria,
+      prompt: systemPrompt,
     });
 
-    const reply = chatCompletion.choices[0].message.content;
-    addToContext(name, 'assistant', reply);
-
-    await fetch(process.env.MANYCHAT_WEBHOOK, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: reply, name }),
-    });
+    const resultado = await chain.call({ input: mensaje });
+    res.json({ respuesta: resultado.response });
   } catch (error) {
-    console.error(error);
+    console.error("Error procesando /api/chat:", error);
+    res.status(500).json({ error: "Error interno del servidor." });
   }
 });
 
-const PORT = process.env.PORT || 3000;
+app.get("/", (_, res) => {
+  res.send("Backend de Blue Home Inmobiliaria operativo.");
+});
+
 app.listen(PORT, () => {
-  console.log(`Servidor activo en puerto ${PORT}`);
+  console.log(`Servidor corriendo en puerto ${PORT}`);
 });
