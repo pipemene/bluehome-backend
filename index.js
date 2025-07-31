@@ -1,107 +1,117 @@
 import express from "express";
-import cors from "cors";
 import dotenv from "dotenv";
-import bodyParser from "body-parser";
 import { GoogleSpreadsheet } from "google-spreadsheet";
-import { ChatOpenAI } from "@langchain/openai";
-import { BufferMemory } from "langchain/memory";
-import { ConversationChain } from "langchain/chains";
+import pkg from "openai";
+import bodyParser from "body-parser";
+import axios from "axios";
 
 dotenv.config();
+const { OpenAI } = pkg;
 const app = express();
-app.use(cors());
+const port = process.env.PORT || 3000;
+
 app.use(bodyParser.json());
 
-const PORT = process.env.PORT || 3000;
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const doc = new GoogleSpreadsheet(process.env.SHEET_ID);
-let rows = [];
+async function getSheetData(code) {
+    try {
+        await doc.useApiKey(process.env.GOOGLE_SHEETS_API_KEY);
+        await doc.loadInfo();
+        const sheet = doc.sheetsByIndex[0];
+        const rows = await sheet.getRows();
+        const result = rows.find((row) => row.codigo === code);
+        return result ? rowToObject(result) : null;
+    } catch (error) {
+        console.error("Error al acceder a Google Sheets:", error);
+        return null;
+    }
+}
 
-async function loadSheet() {
-  try {
-    await doc.useServiceAccountAuth({
-      client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\n/g, "
-"),
+function rowToObject(row) {
+    return {
+        codigo: row.codigo,
+        enlace_youtube: row["enlace youtube"],
+        ficha_tecnica: row["ENLACE FICHA TECNICA"],
+        habitaciones: row["numero habitaciones"],
+        banos: row["numero banos"],
+        parqueadero: row.parqueadero,
+        canon: row["valor canon"],
+        estado: row.ESTADO,
+        tipo: row.tipo
+    };
+}
+
+async function callOpenAI(messages) {
+    const completion = await openai.chat.completions.create({
+        model: "gpt-4",
+        messages,
+        temperature: 0.4
     });
-    await doc.loadInfo();
-    const sheet = doc.sheetsByIndex[0];
-    rows = await sheet.getRows();
-    console.log("Google Sheet cargado con", rows.length, "filas.");
-  } catch (error) {
-    console.error("Error cargando Google Sheet:", error);
-  }
-}
-loadSheet();
-
-const memoryMap = new Map();
-
-function getMemoryForUser(userId) {
-  if (!memoryMap.has(userId)) {
-    memoryMap.set(userId, new BufferMemory({ returnMessages: true, memoryKey: "chat_history" }));
-  }
-  return memoryMap.get(userId);
+    return completion.choices[0].message.content;
 }
 
-const model = new ChatOpenAI({
-  temperature: 0.4,
-  openAIApiKey: process.env.OPENAI_API_KEY,
-  modelName: "gpt-4o",
-});
+async function enviarRespuestaAManyChat(userId, text) {
+    try {
+        await axios.post(`https://api.manychat.com/fb/sending/sendContent`, {
+            subscriber_id: userId,
+            message: { text },
+        }, {
+            headers: {
+                Authorization: `Bearer ${process.env.MANYCHAT_API_KEY}`,
+                "Content-Type": "application/json",
+            }
+        });
+    } catch (error) {
+        console.error("Error enviando mensaje a ManyChat:", error?.response?.data || error.message);
+    }
+}
 
-const systemPrompt = `
-Eres un asistente de Blue Home Inmobiliaria, experto en arrendamientos en Palmira y Cali.
-- Si te preguntan por un inmueble, consulta el código en la hoja de cálculo cargada.
-- Si el inmueble no está disponible, informa que no está disponible.
-- Si el inmueble está disponible, responde con habitaciones, baños, parqueadero, canon y link de YouTube.
-- Si no dan código, pregunta tipo de inmueble, presupuesto y habitaciones, y luego sugiere 3 disponibles.
-- Tarifas: 10.45% + IVA por administración. Seguro básico 2.05%. Amparo integral 12.31% sobre canon + 1 SMMLV.
-`;
+const BLUEHOME_PROMPT = `Eres el asistente de Blue Home Inmobiliaria... (aquí va el prompt completo ya guardado).`;
+
+const historial = {};
 
 app.post("/api/chat", async (req, res) => {
-  const { mensaje, usuario } = req.body;
+    const { message, userId } = req.body;
 
-  try {
-    const memoria = getMemoryForUser(usuario);
+    // Respuesta inmediata para evitar timeout
+    res.status(200).json({ success: true });
 
-    // Revisión de código de inmueble
-    const codigo = mensaje.trim().match(/^\d{1,4}$/)?.[0];
-    if (codigo) {
-      const row = rows.find(r => r.codigo === codigo);
-      if (!row) {
-        return res.json({ respuesta: `No encontré ningún inmueble con el código ${codigo}.` });
-      }
-      if (row.ESTADO === "no_disponible") {
-        return res.json({ respuesta: `El inmueble con código ${codigo} actualmente no está disponible.` });
-      }
-
-      const respuesta = `🏠 Inmueble disponible:
-- Habitaciones: ${row["numero habitaciones"]}
-- Baños: ${row["numero banos"]}
-- Parqueadero: ${row["parqueadero"]}
-- Valor del canon: ${row["valor canon"]}
-🎥 Mira el video: ${row["enlace youtube"]}`;
-      return res.json({ respuesta });
+    if (!historial[userId]) {
+        historial[userId] = [
+            { role: "system", content: BLUEHOME_PROMPT }
+        ];
     }
 
-    const chain = new ConversationChain({
-      llm: model,
-      memory: memoria,
-      prompt: systemPrompt,
-    });
+    historial[userId].push({ role: "user", content: message });
 
-    const resultado = await chain.call({ input: mensaje });
-    res.json({ respuesta: resultado.response });
-  } catch (error) {
-    console.error("Error procesando /api/chat:", error);
-    res.status(500).json({ error: "Error interno del servidor." });
-  }
+    const codeMatch = message.trim().match(/^(\d{1,4})$/);
+    if (codeMatch) {
+        const code = codeMatch[1];
+        const data = await getSheetData(code);
+        if (!data || data.estado === "no_disponible") {
+            await enviarRespuestaAManyChat(userId, `Ese inmueble ya no está disponible. ¿Te gustaría ver otras opciones?`);
+        } else {
+            const texto = `🏡 Código ${code}
+📍 ${data.tipo}, ${data.habitaciones} habs, ${data.banos} baños, parqueadero: ${data.parqueadero}
+Canon: $${data.canon}
+🔗 Video: ${data.enlace_youtube}`;
+            await enviarRespuestaAManyChat(userId, texto);
+        }
+        return;
+    }
+
+    try {
+        const respuesta = await callOpenAI(historial[userId]);
+        historial[userId].push({ role: "assistant", content: respuesta });
+        await enviarRespuestaAManyChat(userId, respuesta);
+    } catch (error) {
+        console.error("Error procesando mensaje:", error);
+        await enviarRespuestaAManyChat(userId, "Ocurrió un error procesando tu mensaje.");
+    }
 });
 
-app.get("/", (_, res) => {
-  res.send("Backend de Blue Home Inmobiliaria operativo.");
-});
-
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en puerto ${PORT}`);
+app.listen(port, () => {
+    console.log(`Servidor iniciado en puerto ${port}`);
 });
