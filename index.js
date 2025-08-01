@@ -1,116 +1,117 @@
 import express from "express";
 import bodyParser from "body-parser";
-import dotenv from "dotenv";
 import { GoogleSpreadsheet } from "google-spreadsheet";
-import OpenAI from "openai";
-import fetch from "node-fetch";
-import { config } from "node-config-ts";
+import { config } from "dotenv";
+import { ChatOpenAI } from "langchain/chat_models/openai";
+import { OpenAIEmbeddings } from "langchain/embeddings/openai";
+import { MemoryVectorStore } from "langchain/vectorstores/memory";
+import { PromptTemplate } from "langchain/prompts";
+import axios from "axios";
+import fs from "fs";
+import csv from "csv-parser";
 
-dotenv.config();
+config();
 
 const app = express();
 app.use(bodyParser.json());
-
 const PORT = process.env.PORT || 3000;
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const contextStore = new Map();
 
-const sendToManychat = async (userId, message) => {
-  const url = `https://api.manychat.com/fb/sending/sendContent`;
-  await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.MANYCHAT_API_KEY}`,
-    },
-    body: JSON.stringify({
-      subscriber_id: userId,
-      data: {
-        version: "v2",
-        content: {
-          messages: [
-            {
-              type: "text",
-              text: message,
-            },
-          ],
-        },
-      },
-    }),
+const SYSTEM_PROMPT = process.env.BLUEHOME_PROMPT;
+
+function getUserContext(userId) {
+  return contextStore.get(userId) || [];
+}
+
+function updateUserContext(userId, newMessage) {
+  const context = getUserContext(userId);
+  context.push(newMessage);
+  if (context.length > 10) context.shift();
+  contextStore.set(userId, context);
+}
+
+function resetUserContext(userId) {
+  contextStore.set(userId, []);
+}
+
+async function fetchInmuebleData(codigo) {
+  return new Promise((resolve, reject) => {
+    const results = [];
+    fs.createReadStream("inmuebles.csv")
+      .pipe(csv())
+      .on("data", (data) => results.push(data))
+      .on("end", () => {
+        const inmueble = results.find((row) => row.codigo === codigo);
+        resolve(inmueble);
+      })
+      .on("error", reject);
   });
-};
+}
 
-const fetchSheetData = async (code) => {
-  const doc = new GoogleSpreadsheet(process.env.SHEET_ID);
-  await doc.useServiceAccountAuth({
-    client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\n/g, "\n"),
-  });
-  await doc.loadInfo();
-  const sheet = doc.sheetsByIndex[0];
-  const rows = await sheet.getRows();
-  const result = rows.find((row) => row.codigo === code);
-  return result ? {
-    enlaceYoutube: row["enlace youtube"],
-    habitaciones: row["numero habitaciones"],
-    banos: row["numero banos"],
-    parqueadero: row["parqueadero"],
-    canon: row["valor canon"],
-    estado: row["ESTADO"],
-  } : null;
-};
+app.post("/api/async-chat", async (req, res) => {
+  const { message, user_id } = req.body;
 
-app.post("/api/chat", async (req, res) => {
-  const userMessage = req.body.message?.text;
-  const userId = req.body.subscriber_id;
+  if (!message || !user_id) return res.sendStatus(400);
+  if (message.toLowerCase() === "test") {
+    resetUserContext(user_id);
+    return res.send({ text: "✅ Contexto reiniciado exitosamente." });
+  }
 
-  // 1. Responder de inmediato a ManyChat
-  res.end();
+  res.sendStatus(200); // Respuesta inmediata a ManyChat
 
-  if (!userMessage || !userId) return;
-
-  // 2. Procesar en segundo plano
   try {
-    if (userMessage.toLowerCase().trim() === "test") {
-      await sendToManychat(userId, "✅ Se reinició el contexto. ¿Cómo puedo ayudarte?");
-      return;
-    }
+    const inmuebleData = await fetchInmuebleData(message.trim());
+    let responseText = "";
 
-    const codeMatch = userMessage.match(/\b\d{1,4}\b/);
-    if (codeMatch) {
-      const inmueble = await fetchSheetData(codeMatch[0]);
-      if (!inmueble || inmueble.estado === "no_disponible") {
-        await sendToManychat(userId, `El inmueble con código ${codeMatch[0]} actualmente no está disponible.
-¿Tienes alguna duda?`);
-        return;
+    if (inmuebleData) {
+      if (inmuebleData.ESTADO === "no_disponible") {
+        responseText = "Este inmueble ya no se encuentra disponible.";
+      } else {
+        responseText = `🏠 Código ${inmuebleData.codigo}:
+- ${inmuebleData["numero habitaciones"]} habitaciones
+- ${inmuebleData["numero banos"]} baños
+- Parqueadero: ${inmuebleData.parqueadero}
+- Valor: ${inmuebleData["valor canon"]}
+
+🎥 Mira el video aquí:
+${inmuebleData["enlace youtube"]}`;
       }
-      await sendToManychat(userId,
-        `🏡 Inmueble código ${codeMatch[0]}:
+    } else {
+      const history = getUserContext(user_id);
+      const chat = new ChatOpenAI({
+        temperature: 0.4,
+        modelName: "gpt-4",
+        openAIApiKey: process.env.OPENAI_API_KEY,
+      });
 
-- Habitaciones: ${inmueble.habitaciones}
-- Baños: ${inmueble.banos}
-- Parqueadero: ${inmueble.parqueadero}
-- Canon: ${inmueble.canon}
+      const fullPrompt = `${SYSTEM_PROMPT}
 
-🎥 Video: ${inmueble.enlaceYoutube}`
-      );
-      return;
+Historial:
+${history.map(m => m.role + ": " + m.content).join("\n")}
+
+Usuario: ${message}
+Asistente:`;
+
+      const result = await chat.call([
+        { role: "system", content: SYSTEM_PROMPT },
+        ...history,
+        { role: "user", content: message },
+      ]);
+
+      responseText = result.content;
+      updateUserContext(user_id, { role: "user", content: message });
+      updateUserContext(user_id, { role: "assistant", content: responseText });
     }
 
-    const completion = await openai.chat.completions.create({
-      messages: [{ role: "user", content: userMessage }],
-      model: "gpt-4",
+    await axios.post(process.env.MANYCHAT_API_URL, {
+      messages: [{ type: "text", text: responseText }],
     });
-
-    const response = completion.choices[0]?.message?.content?.trim();
-    await sendToManychat(userId, response || "No entendí bien. ¿Podrías repetirlo?");
   } catch (error) {
-    console.error("❌ Error:", error);
-    await sendToManychat(userId, "Ocurrió un error procesando tu solicitud. Intenta más tarde.");
+    console.error("Error:", error);
   }
 });
 
 app.listen(PORT, () => {
-  console.log("✅ Servidor activo en el puerto", PORT);
+  console.log(`Server running on port ${PORT}`);
 });
