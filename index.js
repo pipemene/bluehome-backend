@@ -1,117 +1,88 @@
-import express from "express";
-import bodyParser from "body-parser";
-import { GoogleSpreadsheet } from "google-spreadsheet";
-import { config } from "dotenv";
-import { ChatOpenAI } from "langchain/chat_models/openai";
-import { OpenAIEmbeddings } from "langchain/embeddings/openai";
-import { MemoryVectorStore } from "langchain/vectorstores/memory";
-import { PromptTemplate } from "langchain/prompts";
-import axios from "axios";
-import fs from "fs";
-import csv from "csv-parser";
+import express from 'express';
+import bodyParser from 'body-parser';
+import dotenv from 'dotenv';
+import { GoogleSpreadsheet } from 'google-spreadsheet';
+import { OpenAI } from 'openai';
 
-config();
+dotenv.config();
 
 const app = express();
 app.use(bodyParser.json());
-const PORT = process.env.PORT || 3000;
 
-const contextStore = new Map();
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const SYSTEM_PROMPT = process.env.BLUEHOME_PROMPT;
+const doc = new GoogleSpreadsheet(process.env.SHEET_ID);
+await doc.useApiKey(process.env.GOOGLE_API_KEY);
+await doc.loadInfo();
+const sheet = doc.sheetsByIndex[0];
 
-function getUserContext(userId) {
-  return contextStore.get(userId) || [];
-}
-
-function updateUserContext(userId, newMessage) {
-  const context = getUserContext(userId);
-  context.push(newMessage);
-  if (context.length > 10) context.shift();
-  contextStore.set(userId, context);
-}
-
-function resetUserContext(userId) {
-  contextStore.set(userId, []);
-}
-
-async function fetchInmuebleData(codigo) {
-  return new Promise((resolve, reject) => {
-    const results = [];
-    fs.createReadStream("inmuebles.csv")
-      .pipe(csv())
-      .on("data", (data) => results.push(data))
-      .on("end", () => {
-        const inmueble = results.find((row) => row.codigo === codigo);
-        resolve(inmueble);
-      })
-      .on("error", reject);
-  });
-}
+let sessionMemory = {};
 
 app.post("/api/async-chat", async (req, res) => {
-  const { message, user_id } = req.body;
+  const { pregunta, userId } = req.body;
 
-  if (!message || !user_id) return res.sendStatus(400);
-  if (message.toLowerCase() === "test") {
-    resetUserContext(user_id);
-    return res.send({ text: "✅ Contexto reiniciado exitosamente." });
-  }
-
-  res.sendStatus(200); // Respuesta inmediata a ManyChat
+  res.sendStatus(200); // Respuesta inmediata para evitar timeout en ManyChat
 
   try {
-    const inmuebleData = await fetchInmuebleData(message.trim());
-    let responseText = "";
-
-    if (inmuebleData) {
-      if (inmuebleData.ESTADO === "no_disponible") {
-        responseText = "Este inmueble ya no se encuentra disponible.";
-      } else {
-        responseText = `🏠 Código ${inmuebleData.codigo}:
-- ${inmuebleData["numero habitaciones"]} habitaciones
-- ${inmuebleData["numero banos"]} baños
-- Parqueadero: ${inmuebleData.parqueadero}
-- Valor: ${inmuebleData["valor canon"]}
-
-🎥 Mira el video aquí:
-${inmuebleData["enlace youtube"]}`;
-      }
-    } else {
-      const history = getUserContext(user_id);
-      const chat = new ChatOpenAI({
-        temperature: 0.4,
-        modelName: "gpt-4",
-        openAIApiKey: process.env.OPENAI_API_KEY,
-      });
-
-      const fullPrompt = `${SYSTEM_PROMPT}
-
-Historial:
-${history.map(m => m.role + ": " + m.content).join("\n")}
-
-Usuario: ${message}
-Asistente:`;
-
-      const result = await chat.call([
-        { role: "system", content: SYSTEM_PROMPT },
-        ...history,
-        { role: "user", content: message },
-      ]);
-
-      responseText = result.content;
-      updateUserContext(user_id, { role: "user", content: message });
-      updateUserContext(user_id, { role: "assistant", content: responseText });
+    if (pregunta.toLowerCase() === "test") {
+      sessionMemory[userId] = "";
+      return;
     }
 
-    await axios.post(process.env.MANYCHAT_API_URL, {
-      messages: [{ type: "text", text: responseText }],
+    // Leer hoja de Google Sheets
+    await sheet.loadCells();
+
+    const rows = await sheet.getRows();
+    const matched = rows.find(r => r.codigo?.toLowerCase() === pregunta.toLowerCase());
+
+    let respuestaSheets = "";
+    if (matched) {
+      if (matched.ESTADO === "no_disponible") {
+        respuestaSheets = "Ese inmueble no está disponible en este momento.";
+      } else {
+        respuestaSheets = `📍 Dirección: ${matched.direccion}
+💰 Canon: ${matched["valor canon"]}
+🛏️ Habitaciones: ${matched["numero habitaciones"]}
+🚽 Baños: ${matched["numero banos"]}
+🚗 Parqueadero: ${matched["parqueadero"]}
+🎥 Video: ${matched["enlace youtube"]}`;
+      }
+    }
+
+    const mensaje = respuestaSheets || pregunta;
+
+    if (!sessionMemory[userId]) sessionMemory[userId] = "";
+    sessionMemory[userId] += `Usuario: ${pregunta}
+`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: process.env.BLUEHOME_PROMPT },
+        { role: "user", content: sessionMemory[userId] + `Asistente:` },
+      ],
+    });
+
+    const respuesta = completion.choices[0].message.content.trim();
+    sessionMemory[userId] += `Asistente: ${respuesta}
+`;
+
+    await fetch(process.env.MANYCHAT_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.MANYCHAT_TOKEN}`,
+      },
+      body: JSON.stringify({
+        user_id: userId,
+        message: { text: respuesta },
+      }),
     });
   } catch (error) {
-    console.error("Error:", error);
+    console.error(error);
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(process.env.PORT || 3000, () => {
+  console.log("Servidor corriendo");
 });
