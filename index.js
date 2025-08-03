@@ -1,64 +1,80 @@
-
 import express from "express";
-import bodyParser from "body-parser";
 import fetch from "node-fetch";
 import dotenv from "dotenv";
-import cors from "cors";
-import { GoogleSpreadsheet } from "google-spreadsheet";
-import { JWT } from "google-auth-library";
+import bodyParser from "body-parser";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
 dotenv.config();
 
 const app = express();
-app.use(cors());
+const port = process.env.PORT || 3000;
+
 app.use(bodyParser.json());
 
-const doc = new GoogleSpreadsheet(process.env.SHEET_ID);
-const auth = new JWT({
-  email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-  key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-});
+const SHEETS_URL = process.env.SHEETS_CSV_URL;
 
-async function buscarInmueblePorCodigo(codigo) {
-  await doc.useJwtAuth(auth);
-  await doc.loadInfo();
-  const sheet = doc.sheetsByIndex[0];
-  const rows = await sheet.getRows();
-  const row = rows.find((r) => r.codigo === codigo.toString());
-  if (!row) return null;
-  const estado = row.ESTADO?.toLowerCase() === "yes";
-  if (!estado) return "no_disponible";
-  return {
-    enlace_youtube: row["enlace youtube"],
-    habitaciones: row["numero habitaciones"],
-    banos: row["numero banos"],
-    parqueadero: row["parqueadero"],
-    canon: row["valor canon"],
-  };
+async function buscarInmueble(codigo) {
+  try {
+    const res = await fetch(SHEETS_URL);
+    const data = await res.text();
+    const rows = data.split("\n").slice(1);
+    const headers = data.split("\n")[0].split(",");
+    for (const row of rows) {
+      const cols = row.split(",");
+      if (cols[0] && cols[0].trim() === codigo.trim()) {
+        const inmueble = {};
+        headers.forEach((h, i) => {
+          inmueble[h.trim().toLowerCase()] = cols[i]?.trim();
+        });
+        return inmueble;
+      }
+    }
+    return null;
+  } catch (e) {
+    console.error("Error leyendo Google Sheets:", e);
+    return null;
+  }
 }
 
 app.post("/api/chat", async (req, res) => {
-  const { userId, pregunta } = req.body;
-  const codigo = pregunta.match(/\d+/)?.[0];
-  if (codigo) {
-    const inmueble = await buscarInmueblePorCodigo(codigo);
-    if (!inmueble || inmueble === "no_disponible") {
-      return res.json({
-        respuesta: `El inmueble con código ${codigo} actualmente no está disponible.`,
-      });
+  const { message } = req.body;
+  if (!message) return res.status(400).json({ error: "Mensaje requerido" });
+
+  // Revisar si es un código
+  if (/^\d{1,4}$/.test(message.trim())) {
+    const inmueble = await buscarInmueble(message.trim());
+    if (!inmueble) {
+      return res.json({ reply: "Ese código no está disponible en este momento. ¿Quieres que te muestre otras opciones?" });
     }
     return res.json({
-      respuesta: `El inmueble con código ${codigo} está disponible.\nHabitaciones: ${inmueble.habitaciones}, Baños: ${inmueble.banos}, Parqueadero: ${inmueble.parqueadero}, Canon: ${inmueble.canon}.\nVideo: ${inmueble.enlace_youtube}`,
+      reply: \`📍 Dirección: \${inmueble.direccion || "No registrada"}
+💰 Canon: \${inmueble["valor canon"] || "N/A"}
+🛏 Habitaciones: \${inmueble["numero habitaciones"] || "N/A"}
+🛁 Baños: \${inmueble["numero banos"] || "N/A"}
+🚗 Parqueadero: \${inmueble.parqueadero || "N/A"}
+🎥 Video: \${inmueble["enlace youtube"] || "No disponible"}\`
     });
   }
 
-  return res.json({
-    respuesta:
-      "No entendí el valor. ¿Podrías escribir solo el número o decirme qué necesitas?",
-  });
+  // Otros mensajes
+  if (message.toLowerCase().includes("pse")) {
+    return res.json({
+      reply: "Puedes hacer tu pago por PSE aquí: https://gateway1.ecollect.co/eCollectPlus/SignIn.aspx. Solo necesitas tu número de cédula."
+    });
+  }
+
+  if (message.toLowerCase().includes("estado de cuenta") || message.toLowerCase().includes("certificado")) {
+    return res.json({
+      reply: `Puedes descargar tu estado de cuenta, factura o certificado en nuestra oficina virtual: https://simidocs.siminmobiliarias.com/base/simired/simidocsapi1.0/index.php?inmo=901&tipo=1
+Usuario: tu cédula
+Contraseña inicial: 0000
+Video tutorial: https://www.youtube.com/watch?v=pzdBniZ9e4o`
+    });
+  }
+
+  return res.json({ reply: "Gracias por tu mensaje. ¿Quieres ver inmuebles disponibles? Envíame el tipo de inmueble o tu presupuesto." });
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en puerto ${PORT}`);
+app.listen(port, () => {
+  console.log(\`Servidor corriendo en puerto \${port}\`);
 });
