@@ -1,88 +1,67 @@
 import express from "express";
-import bodyParser from "body-parser";
 import dotenv from "dotenv";
+import bodyParser from "body-parser";
 import { GoogleSpreadsheet } from "google-spreadsheet";
-import { ChatOpenAI } from "langchain/chat_models/openai";
-import { AIMessage, HumanMessage } from "langchain/schema";
-import { BufferMemory } from "langchain/memory";
-import { RunnableSequence } from "langchain/schema/runnable";
+import pkg from "openai";
+import prompt from "./prompt.js";
 
 dotenv.config();
 
+const { OpenAI } = pkg;
 const app = express();
-const port = process.env.PORT || 3000;
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 app.use(bodyParser.json());
 
-const memoryMap = {};
+const sheetsURL = process.env.GOOGLE_SHEETS_CSV;
 
-const sheetUrl = process.env.SHEET_CSV_URL;
-
-async function fetchSheetData() {
-    const response = await fetch(sheetUrl);
-    const csv = await response.text();
-    const lines = csv.split("\n");
-    const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
-    return lines.slice(1).map(line => {
-        const values = line.split(",");
-        return headers.reduce((acc, h, i) => {
-            acc[h] = values[i]?.trim();
-            return acc;
-        }, {});
+async function getSheetData(code) {
+  const response = await fetch(sheetsURL);
+  const csv = await response.text();
+  const lines = csv.split("\n");
+  const headers = lines[0].split(",");
+  const entries = lines.slice(1).map(line => {
+    const data = {};
+    line.split(",").forEach((value, index) => {
+      data[headers[index]] = value;
     });
-}
+    return data;
+  });
 
-function getPrompt(context) {
-    return `Eres el asistente de Blue Home Inmobiliaria. Tu tarea es responder de forma concreta, profesional pero cercana. Si el usuario escribe "test", debes reiniciar la conversación. 
-Recuerda que los inmuebles se administran desde $600.000 COP, que la comisión es 10.45% + IVA y que el amparo básico cuesta 2.05% sobre el canon mensual. Usa esta información siempre y no inventes datos.`;
+  return entries.find(row => row.codigo === code && row.ESTADO !== "no_disponible");
 }
 
 app.post("/api/chat", async (req, res) => {
-    try {
-        const { message, user } = req.body;
-        if (!user || !message) return res.status(400).send("Faltan datos");
+  const { message, user } = req.body;
 
-        if (!memoryMap[user] || message.trim().toLowerCase() === "test") {
-            memoryMap[user] = new BufferMemory({ returnMessages: true, memoryKey: "history" });
-        }
+  if (!message) return res.status(400).json({ error: "No message provided" });
 
-        const memory = memoryMap[user];
-        const model = new ChatOpenAI({
-            modelName: "gpt-4",
-            temperature: 0,
-            openAIApiKey: process.env.OPENAI_API_KEY,
-        });
-
-        const prompt = getPrompt();
-        const chain = RunnableSequence.from([
-            async (input) => {
-                const sheetData = await fetchSheetData();
-                const code = input.match(/\b\d{1,4}\b/);
-                if (code) {
-                    const inmueble = sheetData.find((d) => d.codigo === code[0]);
-                    if (inmueble && inmueble.estado !== "no_disponible") {
-                        return `${prompt}\nInformación del código ${code[0]}: ${JSON.stringify(inmueble)}\nUsuario: ${input}`;
-                    } else if (inmueble?.estado === "no_disponible") {
-                        return `${prompt}\nEl inmueble con código ${code[0]} no está disponible.\nUsuario: ${input}`;
-                    }
-                }
-                return `${prompt}\nUsuario: ${input}`;
-            },
-            model,
-        ]);
-
-        const history = await memory.loadMemoryVariables({});
-        const response = await chain.invoke(message, { history: history.history || [] });
-
-        await memory.saveContext({ input: message }, { output: response.content });
-
-        return res.json({ reply: response.content });
-    } catch (error) {
-        console.error("Error:", error);
-        return res.status(500).json({ error: "Error interno del servidor" });
+  const codeMatch = message.match(/\b\d{1,4}\b/);
+  if (codeMatch) {
+    const code = codeMatch[0];
+    const property = await getSheetData(code);
+    if (property) {
+      const response = `🏡 Inmueble ${code}:
+📍 Dirección: ${property["ENLACE FICHA TECNICA"]}
+💰 Canon: ${property["valor canon"]}
+🛏️ Habitaciones: ${property["numero habitaciones"]}
+🚿 Baños: ${property["numero banos"]}
+🚗 Parqueadero: ${property["parqueadero"]}
+🎥 Video: ${property["enlace youtube"]}`;
+      return res.json({ response });
+    } else {
+      return res.json({ response: `El inmueble con código ${code} no está disponible actualmente.` });
     }
+  }
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4",
+    messages: [{ role: "system", content: prompt }, { role: "user", content: message }],
+  });
+
+  res.json({ response: completion.choices[0].message.content });
 });
 
-app.listen(port, () => {
-    console.log(`Servidor corriendo en el puerto ${port}`);
+app.listen(3000, () => {
+  console.log("Servidor iniciado en puerto 3000");
 });
