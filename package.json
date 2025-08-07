@@ -1,16 +1,18 @@
+
 {
   "name": "bluehome-backend",
   "version": "1.0.0",
+  "description": "Backend para ManyChat con Google Sheets CSV",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "axios": "^1.6.0",
-    "cors": "^2.8.5",
+    "body-parser": "^1.20.2",
+    "csv-parser": "^3.0.0",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "google-spreadsheet": "^3.3.0"
+    "node-fetch": "^3.3.2"
   }
 }
