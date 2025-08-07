@@ -1,90 +1,78 @@
-
 import express from "express";
 import bodyParser from "body-parser";
-import { config } from "dotenv";
 import fetch from "node-fetch";
 import csv from "csv-parser";
-import https from "https";
-import http from "http";
-import fs from "fs";
+import { Readable } from "stream";
 
-config();
 const app = express();
-const PORT = process.env.PORT || 8080;
-
 app.use(bodyParser.json());
 
-// Descargar y leer el CSV
-async function loadCSVData() {
-  return new Promise((resolve, reject) => {
-    const results = [];
-    const url = process.env.GOOGLE_SHEET_CSV_URL;
-    const protocol = url.startsWith("https") ? https : http;
-
-    protocol.get(url, (res) => {
-      res.pipe(csv())
-        .on("data", (data) => results.push(data))
-        .on("end", () => resolve(results))
-        .on("error", reject);
-    }).on("error", reject);
-  });
-}
-
-// Buscar propiedades disponibles
-function filtrarInmuebles(data, tipo, presupuesto) {
-  const cleanPresupuesto = parseInt(presupuesto.toString().replace(/[^0-9]/g, ""));
-
-  return data.filter((row) => {
-    const estado = (row.ESTADO || "").toLowerCase().trim();
-    const tipoRow = (row.tipo || "").toLowerCase().trim();
-    const canon = parseInt((row["valor canon"] || "").replace(/[^0-9]/g, ""));
-
-    return estado === "yes" &&
-           tipoRow.includes(tipo.toLowerCase()) &&
-           !isNaN(canon) &&
-           canon <= cleanPresupuesto;
-  });
-}
+const SHEET_CSV_URL = process.env.GOOGLE_SHEET_CSV_URL || "https://docs.google.com/spreadsheets/d/e/2PACX-1vTe5bAfaAIJDsDj6Hgz43yQ7gQ9TSm77Pp-g-3zBby_PuCknOfOta_3KsQX0-ofmG7hY6zDcxU3qBcS/pub?gid=0&single=true&output=csv";
 
 app.post("/api/chat", async (req, res) => {
   try {
-    const { userId, pregunta } = req.body;
-    const preguntaLower = pregunta.toLowerCase();
+    const { pregunta } = req.body;
 
-    // Detectar tipo de inmueble
-    const tipos = ["apartamento", "casa", "apartaestudio", "local"];
-    const tipoDetectado = tipos.find((tipo) => preguntaLower.includes(tipo));
+    // Detectar tipo y presupuesto
+    const tipoMatch = pregunta.match(/(apartamento|casa|apartaestudio|local)/i);
+    const presupuestoMatch = pregunta.replace(/[.,]/g, "").match(/\d{6,}/);
 
-    // Detectar presupuesto (número más grande del mensaje)
-    const numeros = preguntaLower.match(/[0-9.]+/g);
-    const presupuestoDetectado = numeros ? Math.max(...numeros.map(n => parseInt(n.replace(/\./g, "")))) : null;
-
-    if (!tipoDetectado || !presupuestoDetectado) {
-      return res.json({ respuesta: "¿Qué tipo de inmueble buscas y cuál es tu presupuesto máximo de arriendo?" });
+    if (!tipoMatch || !presupuestoMatch) {
+      return res.json({
+        respuesta:
+          "¿Podrías decirme el tipo de inmueble que buscas (casa, apartamento, apartaestudio o local) y tu presupuesto máximo?",
+      });
     }
 
-    const datos = await loadCSVData();
-    const sugerencias = filtrarInmuebles(datos, tipoDetectado, presupuestoDetectado);
+    const tipoBuscado = tipoMatch[1].toLowerCase();
+    const presupuestoMax = parseInt(presupuestoMatch[0]);
 
-    if (sugerencias.length === 0) {
-      return res.json({ respuesta: `No tengo ${tipoDetectado}s disponibles por ese presupuesto en este momento.` });
+    // Descargar CSV
+    const response = await fetch(SHEET_CSV_URL);
+    const data = await response.text();
+
+    const rows = [];
+    await new Promise((resolve, reject) => {
+      Readable.from(data)
+        .pipe(csv())
+        .on("data", (row) => rows.push(row))
+        .on("end", resolve)
+        .on("error", reject);
+    });
+
+    // Filtrar por tipo, estado y presupuesto
+    const disponibles = rows.filter((row) => {
+      const tipo = (row.tipo || "").toLowerCase();
+      const estado = (row.ESTADO || "").toLowerCase();
+      const canon = parseInt((row["valor canon"] || "0").replace(/[.,\$]/g, ""));
+      return (
+        tipo.includes(tipoBuscado) &&
+        estado.includes("yes") &&
+        !isNaN(canon) &&
+        canon <= presupuestoMax
+      );
+    });
+
+    if (disponibles.length === 0) {
+      return res.json({
+        respuesta: "No encontré inmuebles disponibles que coincidan con tu búsqueda.",
+      });
     }
 
-    const top3 = sugerencias.slice(0, 3).map((item) => {
-      return `✅ Código ${item.codigo}: ${item["valor canon"]} - ${item["numero habitaciones"]} hab, ${item["numero banos"]} baños. [Video](${item["enlace youtube"]})`;
-    }).join("
+    const respuestas = disponibles.slice(0, 3).map((row) => {
+      return `Código ${row.codigo}: ${row.tipo}, ${row["numero habitaciones"]} hab., ${row["numero banos"]} baños, canon ${row["valor canon"]}.
+${row["enlace youtube"]}`;
+    });
 
-");
-
-    return res.json({ respuesta: `Estas son algunas opciones disponibles:
-
-${top3}` });
+    return res.json({
+      respuesta: respuestas.join("\n\n"),
+    });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Error interno del servidor" });
+    console.error("ERROR:", error);
+    res.status(500).json({ error: "Error interno del servidor." });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en puerto ${PORT}`);
+app.listen(8080, () => {
+  console.log("Servidor corriendo en puerto 8080");
 });
