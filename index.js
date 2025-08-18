@@ -165,148 +165,151 @@ app.post('/api/search', async (req,res) => {
 
 // ---- Webhook estilo ManyChat simple ----
 // Input esperado: { contact_id, user_name, text }
-app.post('/manychat/webhook', async (req,res) => {
-  try {
-    const { contact_id, user_name, text } = req.body || {};
-    const session = String(contact_id || user_name || 'anon');
-    if (!stateByUser.has(session)) stateByUser.set(session, { expecting: null, filters: {} });
-    const st = stateByUser.get(session);
 
-    // Reset comando
-    if (wantsReset(text)) {
-      stateByUser.set(session, { expecting: null, filters: {} });
-      return res.json({
-        messages: [{ type: 'text', text: 'Contexto reiniciado. ¿Tienes código de inmueble o deseas buscar por filtros?' }],
-        quick_replies: ['Tengo código', 'Buscar por filtros'],
-        context: { session_id: session, reset: true }
-      });
-    }
+// ---- Shared handler for ManyChat-like payloads ----
+async function handleWebhookPayload(payload) {
+  const { contact_id, user_name, text } = payload || {};
+  const session = String(contact_id || user_name || 'anon');
+  if (!stateByUser.has(session)) stateByUser.set(session, { expecting: null, filters: {} });
+  const st = stateByUser.get(session);
 
-    // 1) Prioridad: código de inmueble (corrección del bug)
-    const code = extractCode(text, st.expecting === 'code');
-    if (code) {
-      const p = await propertyByCode(code);
-      if (!p) {
-        st.expecting = 'code';
-        return res.json({
-          messages: [{ type: 'text', text: `No encuentro el código ${code}. Verifica el número o intenta otro.` }],
-          quick_replies: ['Intentar otro código', 'Buscar por filtros'],
-          context: { session_id: session }
-        });
-      }
-      if (p.estado !== 'disponible') {
-        return res.json({
-          messages: [
-            { type:'text', text:`El código ${code} no está disponible ahora.` },
-            { type:'text', text:`¿Deseas buscar por filtros para mostrarte opciones similares?` }
-          ],
-          quick_replies: ['Sí, buscar por filtros','Hablar con asesor'],
-          context: { session_id: session }
-        });
-      }
-      // Respuesta propiedad encontrada
-      st.expecting = null;
-      st.lastIntent = 'property_by_code';
-      return res.json({
-        messages: [{ type:'text', text: renderProperty(p) }],
-        quick_replies: ['Agendar visita','Ver más opciones','Hablar con asesor'],
-        context: { session_id: session }
-      });
-    }
+  // Reset comando
+  if (wantsReset(text)) {
+    stateByUser.set(session, { expecting: null, filters: {} });
+    return {
+      messages: [{ type: 'text', text: 'Contexto reiniciado. ¿Tienes código de inmueble o deseas buscar por filtros?' }],
+      quick_replies: ['Tengo código', 'Buscar por filtros'],
+      context: { session_id: session, reset: true }
+    };
+  }
 
-    // 2) Router simple por palabras clave
-    const t = (text || '').toLowerCase();
-    if (t.includes('tengo codigo') || t.includes('tengo código') || t.includes('codigo') || t.includes('código')) {
+  // 1) Prioridad: código de inmueble
+  const code = extractCode(text, st.expecting === 'code');
+  if (code) {
+    const p = await propertyByCode(code);
+    if (!p) {
       st.expecting = 'code';
-      return res.json({
-        messages: [{ type: 'text', text: 'Perfecto, dime el código (1 a 4 dígitos).' }],
+      return {
+        messages: [{ type: 'text', text: `No encuentro el código ${code}. Verifica el número o intenta otro.` }],
+        quick_replies: ['Intentar otro código', 'Buscar por filtros'],
         context: { session_id: session }
-      });
+      };
     }
-    if (t.includes('buscar por filtros') || t.includes('filtros') || st.expecting === 'type' || st.expecting === 'budget' || st.expecting === 'rooms') {
-      // Flujo por filtros
-      // (a) pedir tipo si no está
-      let tipo = st.filters.tipo || normalizaTipo(text);
-      if (!tipo) {
-        st.expecting = 'type';
-        return res.json({ messages: [{ type:'text', text: askTypeBudget().text }], context: { session_id: session } });
-      }
-      st.filters.tipo = tipo;
-
-      // apartaestudio o local: no pedimos habitaciones
-      const necesitaHabitaciones = !(tipo === 'apartaestudio' || tipo === 'local');
-
-      // (b) presupuesto
-      const pres = st.filters.presupuesto || toNumber(text);
-      if (!st.filters.presupuesto || (st.expecting==='budget' && !pres)) {
-        if (toNumber(text)) {
-          st.filters.presupuesto = toNumber(text);
-        } else {
-          st.expecting = 'budget';
-          return res.json({
-            messages: [{ type:'text', text:'¿Cuál es tu presupuesto máximo (en pesos)?' }],
-            context: { session_id: session }
-          });
-        }
-      }
-
-      // (c) habitaciones (si aplica)
-      if (necesitaHabitaciones) {
-        const habs = st.filters.habitaciones || toNumber(text);
-        if (!st.filters.habitaciones || (st.expecting==='rooms' && !habs)) {
-          if (toNumber(text)) {
-            st.filters.habitaciones = toNumber(text);
-          } else {
-            st.expecting = 'rooms';
-            return res.json({
-              messages: [{ type:'text', text:'¿Cuántas habitaciones mínimo?' }],
-              context: { session_id: session }
-            });
-          }
-        }
-      }
-
-      // (d) buscar
-      const results = await searchProperties({
-        tipo: st.filters.tipo,
-        presupuesto: st.filters.presupuesto,
-        habitaciones: necesitaHabitaciones ? st.filters.habitaciones : 0
-      });
-      st.expecting = null;
-      st.lastIntent = 'search_by_filters';
-
-      if (!results.length) {
-        return res.json({
-          messages: [
-            { type:'text', text:'No encontré inmuebles disponibles que coincidan con tu búsqueda.' },
-            { type:'text', text:'¿Quieres ampliar el presupuesto (+10%) o cambiar de zona/tipo?' }
-          ],
-          quick_replies: ['Ampliar presupuesto','Cambiar tipo','Hablar con asesor'],
-          context: { session_id: session }
-        });
-      }
-
-      return res.json({
-        messages: results.map(p => ({ type:'text', text: renderProperty(p) })),
-        quick_replies: ['Agendar visita','Ver más opciones','Hablar con asesor'],
+    if (DEBUG_YT) console.log('[YOUTUBE_CHECK] webhook code=%s youtube=%s', code, p.youtube || '');
+    if (p.estado !== 'disponible') {
+      return {
+        messages: [
+          { type:'text', text:`El código ${code} no está disponible ahora.` },
+          { type:'text', text:`¿Deseas buscar por filtros para mostrarte opciones similares?` }
+        ],
+        quick_replies: ['Sí, buscar por filtros','Hablar con asesor'],
         context: { session_id: session }
-      });
+      };
     }
-
-    // 3) Fallback: menú breve (evita loop)
+    // Respuesta propiedad encontrada
     st.expecting = null;
-    return res.json({
-      messages: [{ type:'text', text:'¿Tienes código de inmueble o deseas buscar por filtros?' }],
-      quick_replies: ['Tengo código','Buscar por filtros','Hablar con asesor'],
+    st.lastIntent = 'property_by_code';
+    return {
+      messages: [{ type:'text', text: renderProperty(p) }],
+      quick_replies: ['Agendar visita','Ver más opciones','Hablar con asesor'],
       context: { session_id: session }
-    });
+    };
+  }
 
+  // 2) Router simple por palabras clave
+  const t = (text || '').toLowerCase();
+  if (t.includes('tengo codigo') || t.includes('tengo código') || t.includes('codigo') || t.includes('código')) {
+    st.expecting = 'code';
+    return {
+      messages: [{ type: 'text', text: 'Perfecto, dime el código (1 a 4 dígitos).' }],
+      context: { session_id: session }
+    };
+  }
+  if (t.includes('buscar por filtros') || t.includes('filtros') || st.expecting === 'type' || st.expecting === 'budget' || st.expecting === 'rooms') {
+    // Flujo por filtros
+    let tipo = st.filters.tipo || normalizaTipo(text);
+    if (!tipo) {
+      st.expecting = 'type';
+      return { messages: [{ type:'text', text: askTypeBudget().text }], context: { session_id: session } };
+    }
+    st.filters.tipo = tipo;
+    const necesitaHabitaciones = !(tipo === 'apartaestudio' || tipo === 'local');
+
+    const pres = st.filters.presupuesto || toNumber(text);
+    if (!st.filters.presupuesto || (st.expecting==='budget' && !pres)) {
+      if (toNumber(text)) st.filters.presupuesto = toNumber(text);
+      else {
+        st.expecting = 'budget';
+        return { messages: [{ type:'text', text:'¿Cuál es tu presupuesto máximo (en pesos)?' }], context: { session_id: session } };
+      }
+    }
+
+    if (necesitaHabitaciones) {
+      const habs = st.filters.habitaciones || toNumber(text);
+      if (!st.filters.habitaciones || (st.expecting==='rooms' && !habs)) {
+        if (toNumber(text)) st.filters.habitaciones = toNumber(text);
+        else {
+          st.expecting = 'rooms';
+          return { messages: [{ type:'text', text:'¿Cuántas habitaciones mínimo?' }], context: { session_id: session } };
+        }
+      }
+    }
+
+    const results = await searchProperties({
+      tipo: st.filters.tipo,
+      presupuesto: st.filters.presupuesto,
+      habitaciones: necesitaHabitaciones ? st.filters.habitaciones : 0
+    });
+    st.expecting = null;
+    st.lastIntent = 'search_by_filters';
+
+    if (!results.length) {
+      return {
+        messages: [
+          { type:'text', text:'No encontré inmuebles disponibles que coincidan con tu búsqueda.' },
+          { type:'text', text:'¿Quieres ampliar el presupuesto (+10%) o cambiar de zona/tipo?' }
+        ],
+        quick_replies: ['Ampliar presupuesto','Cambiar tipo','Hablar con asesor'],
+        context: { session_id: session }
+      };
+    }
+    return {
+      messages: results.map(p => ({ type:'text', text: renderProperty(p) })),
+      quick_replies: ['Agendar visita','Ver más opciones','Hablar con asesor'],
+      context: { session_id: session }
+    };
+  }
+
+  // 3) Fallback
+  st.expecting = null;
+  return {
+    messages: [{ type:'text', text:'¿Tienes código de inmueble o deseas buscar por filtros?' }],
+    quick_replies: ['Tengo código','Buscar por filtros','Hablar con asesor'],
+    context: { session_id: session }
+  };
+}
+
+app.post('/manychat/webhook', async (req,res) => { try { const resp = await handleWebhookPayload(req.body || {}); res.json(resp); } catch(e){ console.error(e); res.status(500).json({error:e.message}); } });
+app.listen(PORT, () => {
+  console.log(`BlueHome backend running on :${PORT}`);
+});
+
+
+// Alias /api/chat to be compatible with old flows
+app.post('/api/chat', async (req,res) => {
+  try {
+    const b = req.body || {};
+    // Try to infer text from multiple common keys
+    const text = b.text || b.message || (b.input && (b.input.text || b.input)) || b.content || b.last_input || '';
+    const payload = {
+      contact_id: b.contact_id || b.contact || b.user_id || b.session_id || b.contactId || 'anon',
+      user_name:  b.user_name  || b.name     || b.full_name || b.username || '',
+      text
+    };
+    const resp = await handleWebhookPayload(payload);
+    res.json(resp);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
   }
-});
-
-app.listen(PORT, () => {
-  console.log(`BlueHome backend running on :${PORT}`);
 });
