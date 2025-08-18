@@ -18,6 +18,17 @@ app.use(morgan('dev'));
 const PORT = process.env.PORT || 3000;
 const SHEETS_CSV_URL = process.env.SHEETS_CSV_URL || '';
 
+
+// ---- Diagnostics: track last CSV fetch ----
+let lastFetchInfo = { ts: 0, url: SHEETS_CSV_URL, ok: false, error: null, contentType: null, head: null, length: 0 };
+
+function normalizeEstado(v='') {
+  const t = String(v || '').toLowerCase().trim();
+  if (['disponible','yes','si','sí','available','true','1','ok'].includes(t)) return 'disponible';
+  if (['no','ocupado','rentado','retirado','vendido','indisponible','false','0','n/a'].includes(t)) return 'no_disponible';
+  return t || 'no_disponible';
+}
+
 // ---- Estado en memoria (se puede reemplazar por Redis) ----
 /**
  * stateByUser: {
@@ -74,6 +85,10 @@ async function fetchProperties() {
   if (!SHEETS_CSV_URL) return [];
   const resp = await axios.get(SHEETS_CSV_URL, { timeout: 8000 });
   const csv = resp.data;
+  try {
+    const ct = (resp.headers && (resp.headers['content-type'] || resp.headers['Content-Type'])) || '';
+    lastFetchInfo = { ts: Date.now(), url: SHEETS_CSV_URL, ok: true, error: null, contentType: ct, head: String(csv).slice(0, 300), length: String(csv).length };
+  } catch(e) { /* ignore */ }
   return new Promise((resolve, reject) => {
     const out = [];
     parse(csv, { columns: true, skip_empty_lines: true, trim: true }, (err, records) => {
@@ -90,6 +105,7 @@ async function fetchProperties() {
           canon: Number(String(r['valor canon'] || r['canon'] || '0').replace(/[^\d]/g, '')),
           tipo: (r['tipo'] || '').toString().toLowerCase(),
           estado: (r['ESTADO'] || r['estado'] || 'disponible').toString().toLowerCase(),
+          estadoNorm: normalizeEstado(r['ESTADO'] || r['estado'] || ''),
           direccion: r['direccion'] || r['DIRECCION'] || ''
         });
       }
@@ -108,7 +124,7 @@ async function propertyByCodeLoose(code) {
 async function searchProperties({ tipo, presupuesto, habitaciones }) {
   const items = await fetchProperties();
   return items.filter(p => 
-    p.estado === 'disponible' &&
+    (p.estadoNorm || p.estado) === 'disponible' &&
     (!tipo || p.tipo.includes(tipo)) &&
     (!presupuesto || p.canon <= presupuesto) &&
     (!habitaciones || p.habitaciones >= habitaciones)
@@ -142,7 +158,7 @@ app.get('/api/property', async (req,res) => {
     if (!code) return res.status(400).json({ error: 'Missing code' });
     const p = await propertyByCodeLoose(code);
     if (!p) return res.status(404).json({ error: 'Not found' });
-    if (p.estado !== 'disponible') {
+    if ((p.estadoNorm || p.estado) !== 'disponible') {
       return res.json({ available:false, message: 'No disponible', code });
     }
     res.json({ available:true, property: p, message: renderProperty(p) });
@@ -196,7 +212,7 @@ async function handleWebhookPayload(payload) {
       };
     }
     if (DEBUG_YT) console.log('[YOUTUBE_CHECK] webhook code=%s youtube=%s', code, p.youtube || '');
-    if (p.estado !== 'disponible') {
+    if ((p.estadoNorm || p.estado) !== 'disponible') {
       return {
         messages: [
           { type:'text', text:`El código ${code} no está disponible ahora.` },
@@ -366,4 +382,18 @@ app.get('/api/debug/peek', async (req,res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+
+app.get('/api/debug/raw', async (req,res) => {
+  try {
+    // Force a refresh if asked ?refresh=1
+    if (String(req.query.refresh || '') === '1') { cacheCsv = { ts:0, items:[] }; await fetchProperties(); }
+    res.json(lastFetchInfo);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+app.get('/api/debug/env', (req,res) => {
+  res.json({ SHEETS_CSV_URL });
 });
