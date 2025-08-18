@@ -300,9 +300,9 @@ app.post('/api/chat', async (req,res) => {
   try {
     const b = req.body || {};
     // Try to infer text from multiple common keys
-    const text = b.text || b.message || (b.input && (b.input.text || b.input)) || b.content || b.last_input || '';
+    const text = b.text || b.pregunta || b.message || (b.input && (b.input.text || b.input)) || b.content || b.last_input || '';
     const payload = {
-      contact_id: b.contact_id || b.contact || b.user_id || b.session_id || b.contactId || 'anon',
+      contact_id: b.contact_id || b.contact || b.user_id || b.session_id || b.contactId || b.userId || 'anon',
       user_name:  b.user_name  || b.name     || b.full_name || b.username || '',
       text
     };
