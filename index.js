@@ -289,17 +289,33 @@ async function handleWebhookPayload(payload) {
   };
 }
 
-app.post('/manychat/webhook', async (req,res) => { try { const resp = await handleWebhookPayload(req.body || {}); res.json(resp); } catch(e){ console.error(e); res.status(500).json({error:e.message}); } });
+app.post('/manychat/webhook', async (req,res) => { try { const resp = await handleWebhookPayload(req.body || {});
+    res.json(normalizeResponse(resp)); } catch(e){ console.error(e); res.status(500).json({error:e.message}); } });
 app.listen(PORT, () => {
   console.log(`BlueHome backend running on :${PORT}`);
 });
 
 
+
+// Ensure flat 'respuesta' for ManyChat JSONPath mapping
+function normalizeResponse(resp) {
+  try {
+    const msgs = (resp && resp.messages) ? resp.messages : [];
+    const texts = msgs.map(m => (m && m.text) ? String(m.text) : '').filter(Boolean);
+    const first = texts.length ? texts[0] : '';
+    // Join up to 3 messages for convenience
+    const joined = texts.slice(0,3).join('\n\n');
+    return Object.assign({}, resp, { respuesta: joined || first || '' });
+  } catch (e) {
+    return Object.assign({}, resp, { respuesta: '' });
+  }
+}
+
 // Alias /api/chat to be compatible with old flows
+
 app.post('/api/chat', async (req,res) => {
   try {
     const b = req.body || {};
-    // Try to infer text from multiple common keys
     const text = b.text || b.pregunta || b.message || (b.input && (b.input.text || b.input)) || b.content || b.last_input || '';
     const payload = {
       contact_id: b.contact_id || b.contact || b.user_id || b.session_id || b.contactId || b.userId || 'anon',
@@ -307,9 +323,12 @@ app.post('/api/chat', async (req,res) => {
       text
     };
     const resp = await handleWebhookPayload(payload);
-    res.json(resp);
+    const norm = normalizeResponse(resp);
+    // For ManyChat mapping already configured to "respuesta",
+    // return a minimal envelope to avoid any parsing inconsistencies.
+    res.json({ respuesta: norm.respuesta });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: e.message });
+    res.json({ respuesta: '' });
   }
 });
