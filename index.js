@@ -100,7 +100,7 @@ async function fetchProperties() {
 }
 
 // ---- Búsquedas ----
-async function propertyByCode(code) {
+async function propertyByCodeLoose(code) {
   const items = await fetchProperties();
   return items.find(p => p.codigo === String(code));
 }
@@ -140,7 +140,7 @@ app.get('/api/property', async (req,res) => {
   try {
     const code = String(req.query.code || '').trim();
     if (!code) return res.status(400).json({ error: 'Missing code' });
-    const p = await propertyByCode(code);
+    const p = await propertyByCodeLoose(code);
     if (!p) return res.status(404).json({ error: 'Not found' });
     if (p.estado !== 'disponible') {
       return res.json({ available:false, message: 'No disponible', code });
@@ -186,7 +186,7 @@ async function handleWebhookPayload(payload) {
   // 1) Prioridad: código de inmueble
   const code = extractCode(text, st.expecting === 'code');
   if (code) {
-    const p = await propertyByCode(code);
+    const p = await propertyByCodeLoose(code);
     if (!p) {
       st.expecting = 'code';
       return {
@@ -330,5 +330,40 @@ app.post('/api/chat', async (req,res) => {
   } catch (e) {
     console.error(e);
     res.json({ respuesta: '' });
+  }
+});
+
+
+async function propertyByCodeLoose(code) {
+  const items = await fetchProperties();
+  const target = String(code || '').trim();
+  const targetDigits = target.replace(/\D/g, '');
+  return items.find(p => {
+    const c = String(p.codigo || '').trim();
+    if (!c) return false;
+    if (c === target) return true;
+    const cDigits = c.replace(/\D/g, '');
+    return cDigits && cDigits === targetDigits;
+  });
+}
+
+// ---- Debug endpoints ----
+app.get('/api/debug/codes', async (req,res) => {
+  try {
+    const items = await fetchProperties();
+    const sample = items.slice(0,10).map(p => p.codigo);
+    res.json({ count: items.length, sample });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/debug/peek', async (req,res) => {
+  try {
+    const codeQ = String(req.query.code || '').trim();
+    const p = await propertyByCodeLoose(codeQ);
+    res.json({ input: codeQ, found: !!p, property: p || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
