@@ -67,6 +67,7 @@
     ],
     "admin_insurance_explain_short": "Coberturas de los seguros:\n• Amparo básico (2.05%): respaldo ante **incumplimientos de pago** del inquilino y gestiones iniciales de cobranza.\n• Amparo integral (12.31% solo en el 1er mes): incluye **garantía ampliada**, estudio del arrendatario y formalización 100% digital.\nNota: porcentajes ya están incorporados en la simulación.",
     "admin_insurance_examples_title": "Ejemplos de cobertura:",
-    "admin_insurance_examples": "• Amparo básico (2.05%): cubre **canon de arrendamiento hasta por 36 meses** si el inquilino deja de pagar. Blue Home paga al propietario **entre el día 15 y 20 de cada mes**, pague o no pague el inquilino, y gestiona el cobro del seguro aprox. **45 días** después del siniestro.\n• Amparo integral (12.31% – cobro **único** durante todo el contrato): cubre **daños, faltantes y servicios públicos** que el inquilino deje en el inmueble."
+    "admin_insurance_examples": "• Amparo básico (2.05%): cubre **canon de arrendamiento hasta por 36 meses** si el inquilino deja de pagar. Blue Home paga al propietario **entre el día 15 y 20 de cada mes**, pague o no pague el inquilino, y gestiona el cobro del seguro aprox. **45 días** después del siniestro.\n• Amparo integral (12.31% – cobro **único** durante todo el contrato): cubre **daños, faltantes y servicios públicos** que el inquilino deje en el inmueble.",
+    "admin_menu_numbered": "Elige una opción:\n1) Costos\n2) Cómo trabajamos\n3) Oficina Virtual\n4) Simular canon\nResponde con 1-4 o la palabra clave."
   }
 }

@@ -392,6 +392,24 @@ async function handleWebhookPayload(payload) {
   }
 
   if (st.adminStage === 'menu') {
+    // numeric choices
+    if (/^\s*(1|uno)\b/.test(t)) { t = 'costos'; }
+    else if (/^\s*(2|dos)\b/.test(t)) { t = 'como trabajan'; }
+    else if (/^\s*(3|tres)\b/.test(t)) { t = 'oficina virtual'; }
+    else if (/^\s*(4|cuatro)\b/.test(t)) { t = 'simular canon'; }
+
+    // help intents
+    if (/(cu[aá]l opci[oó]n|opci[oó]n(es)?|no me das ninguna|no salen|no veo botones)/.test(t)) {
+      const mm = adminMenu();
+      return { messages: mm.messages, quick_replies: mm.quick_replies, context: { session_id: session } };
+    }
+
+    // synonyms for operation
+    if (/(c[oó]mo funcionan|c[oó]mo trabajan|qu[eé] hacen|operaci[oó]n|proceso|metodolog[ií]a)/.test(t)) {
+      st.adminStage = 'after_operacion'; saveSession(session, st);
+      const chunk = adminChunk('operacion');
+      return { messages: [{ type:'text', text: namePrefix(name) + chunk }], quick_replies: ['Costos','Oficina Virtual','Simular canon','Hablar con asesor'], context: { session_id: session } };
+    }
     if (/(ver ejemplos|ejemplos|ejemplo)/.test(t)) {
       st.adminStage = 'after_insurance'; saveSession(session, st);
       const title = (promptCfg.messages && promptCfg.messages.admin_insurance_examples_title) || 'Ejemplos:';
@@ -573,7 +591,10 @@ async function handleWebhookPayload(payload) {
   
   // ---- Fallback -> entry menu
   const menu = entryMenu();
-  return { messages: [{type:'text', text: (promptCfg.messages && promptCfg.messages.entry_menu_title) || 'Elige una opción:'}], quick_replies: menu.quick_replies, context: { session_id: session } };
+  {
+      const mm = adminMenu();
+      return { messages: mm.messages, quick_replies: mm.quick_replies, context: { session_id: session } };
+    }
 
 }
 
