@@ -291,6 +291,15 @@ function msgPrivacy() { const C = cfgCompany(); return C.privacy ? `🔐 Tratami
 
 
 // ---- Admin staged helpers ----
+
+// ---- Entry role menu
+function entryMenu() {
+  const m = promptCfg.messages || {};
+  const title = m.entry_menu_title || '¿Cómo puedo ayudarte hoy?';
+  const opts = m.entry_menu_options || ['Soy propietario','Soy inquilino','Tengo código','Buscar por filtros','Simular canon'];
+  return { messages: [{type:'text', text: title}], quick_replies: opts };
+}
+
 function adminMenu() {
   const m = promptCfg.messages || {};
   const intro = m.admin_intro_short || 'Nos encargamos de todo.';
@@ -328,6 +337,18 @@ async function handleWebhookPayload(payload) {
   }
 
   const t = (text || '').toLowerCase().trim();
+
+  // Role quick replies / entry routing
+  if (t === 'soy propietario') {
+    st.lastIntent = 'admin'; st.adminStage = 'menu'; await saveSession(session, st);
+    const menu = adminMenu();
+    return { messages: menu.messages, quick_replies: menu.quick_replies, context: { session_id: session } };
+  }
+  if (t === 'soy inquilino') {
+    st.expecting = 'type'; await saveSession(session, st);
+    return { messages: [{ type:'text', text: namePrefix(name) + '¿Tienes código o prefieres buscar por filtros?' }], quick_replies: ['Tengo código','Buscar por filtros'] , context: { session_id: session } };
+  }
+
   const name = st.name || user_name || '';
 
   
@@ -499,10 +520,11 @@ async function handleWebhookPayload(payload) {
     return { messages: results.map(p => ({ type:'text', text: renderProperty(p) })), quick_replies: ['Agendar visita','Ver más opciones','Hablar con asesor'], context: { session_id: session } };
   }
 
-  // ---- Fallback
-  const fb = (promptCfg.messages && promptCfg.messages.fallback) || '¿Quieres ver inmuebles o vender uno?';
-  st.expecting = null; await saveSession(session, st);
-  return { messages: [{ type:'text', text: namePrefix(name) + fb }], quick_replies: ['Ver inmuebles','Tengo código','Simular canon','Hablar con asesor'], context: { session_id: session } };
+  
+  // ---- Fallback -> entry menu
+  const menu = entryMenu();
+  return { messages: [{type:'text', text: namePrefix(name) + ((promptCfg.messages && promptCfg.messages.entry_menu_title) || '¿Cómo puedo ayudarte hoy?')}], quick_replies: menu.quick_replies, context: { session_id: session } };
+
 }
 
 const app = express();

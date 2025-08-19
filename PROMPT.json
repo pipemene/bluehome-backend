@@ -47,6 +47,16 @@
     ],
     "admin_chunk_costos": "📊 Comisión: **10.5% + IVA (≈12.5%)** del canon mensual. Incluye evaluación 100% digital, gestión contractual, recaudo y reportes.",
     "admin_chunk_operacion": "🔁 Cómo trabajamos: publicamos con alcance y respuesta rápida, letreros con **QR** que llevan al chatbot 24/7 con ficha y **video 4K**, y atendemos de **lunes a domingo** (excepto festivos).",
-    "admin_chunk_oficina": "💻 **Oficina Virtual**: en nuestra web descargas **estados de cuenta, facturas y seguimiento** 24/7."
+    "admin_chunk_oficina": "💻 **Oficina Virtual**: en nuestra web descargas **estados de cuenta, facturas y seguimiento** 24/7.",
+    "owner_portal_help": "👤 Propietario cliente:\n• Oficina Virtual 24/7 para **estados de cuenta y facturas** en nuestra web.\n• Tutorial: https://www.youtube.com/watch?v=pzdBniZ9e4o",
+    "tenant_pay_help": "🏠 Inquilino: puedes pagar la renta por **PSE**.\n• Tutorial de pago por PSE: https://www.youtube.com/watch?v=T4g9LKq2C8A",
+    "entry_menu_title": "¿Cómo puedo ayudarte hoy?",
+    "entry_menu_options": [
+      "Soy propietario",
+      "Soy inquilino",
+      "Tengo código",
+      "Buscar por filtros",
+      "Simular canon"
+    ]
   }
 }
