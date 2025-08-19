@@ -22,22 +22,19 @@ let promptCfg = {
   contact: { cities: ['Palmira','Cali'], hours: 'Lun-Vie 9:00-18:00, Sáb 9:00-13:00', address: 'Palmira, Valle del Cauca', whatsapp: '', phone: '', email: '', website: '', privacy_url: '' },
   simulation: { smmlv: 1423500, admin_base_pct: 10.5, iva_pct: 19, amparo_basico_pct: 2.05, amparo_integral_pct: 12.31 },
   messages: {
-    vip_admin: '¡claro que sí! Te daremos trato VIP: plataformas de publicación, seguimiento y reportes claros. Tu confianza es nuestro mayor compromiso.\n\nNota Interna: Este cliente está interesado en entregar su inmueble. ¡Atención personalizada inmediata!',
-    ask_canon_value: 'para simular, dime el valor del canon (en números).',
-    fallback: '¿Quieres ver inmuebles o vender uno? También puedo simular descuentos de tu canon, darte horarios, dirección o ponerte con un asesor.'
+    ask_canon_value: 'Para simular, dime el valor del canon (en números).',
+    admin_pitch: '',
+    admin_fee: '',
+    fallback: '¿Deseas que administremos tu inmueble, simular tu canon o consultar un código para ver la ficha?'
   }
 };
 
 let promptMeta = { source: PROMPT_FILE, mtimeMs: 0, loadedAt: 0, remote: false, ok: false, error: null };
 
 async function fetchRemotePrompt(url) {
-  try {
-    const resp = await axios.get(url, { timeout: 8000 });
-    if (typeof resp.data === 'object') return resp.data;
-    return JSON.parse(resp.data);
-  } catch (e) {
-    throw new Error('PROMPT_URL fetch failed: ' + e.message);
-  }
+  const resp = await axios.get(url, { timeout: 8000 });
+  if (typeof resp.data === 'object') return resp.data;
+  return JSON.parse(resp.data);
 }
 function mergeDeep(target, source) {
   for (const k of Object.keys(source || {})) {
@@ -79,8 +76,6 @@ function maybeReloadPrompt() {
     if (promptMeta.mtimeMs !== stat.mtimeMs) loadPrompt(true);
   } catch {}
 }
-
-// initial load
 loadPrompt(true);
 
 // ---- Optional Redis for persistent sessions ----
@@ -199,6 +194,29 @@ async function fetchProperties() {
   }
 }
 
+async function propertyByCodeLoose(code) {
+  const items = await fetchProperties();
+  const c = String(code||'').trim();
+  if (!c) return null;
+  return items.find(p => String(p.codigo) === c) || null;
+}
+async function searchProperties({ tipo='', presupuesto=0, habitaciones=0 }) {
+  const items = await fetchProperties();
+  const presNum = parseInt(presupuesto || 0, 10) || 0;
+  const habs = parseInt(habitaciones || 0, 10) || 0;
+  const t = String(tipo||'').toLowerCase().trim();
+  const result = items.filter(p => {
+    if (t && p.tipo !== t) return false;
+    if (presNum && p.canon) {
+      const v = parseInt(String(p.canon).replace(/[^\d]/g,''),10) || 0;
+      if (v > presNum) return false;
+    }
+    if (habs && p.habitaciones < habs) return false;
+    return (p.estadoNorm || p.estado) === 'disponible';
+  }).slice(0,5);
+  return result;
+}
+
 // ---- Utils ----
 function wantsReset(text='') {
   const t = String(text || '').toLowerCase();
@@ -242,6 +260,10 @@ function detectCanonValue(text='') {
   const m = t.replace(/[.,]/g,'').match(/(\d{5,9})/);
   return m ? parseInt(m[1],10) : null;
 }
+function extractAmount(text='') {
+  const digits = String(text||'').replace(/[.,]/g,'').match(/\d{5,9}/);
+  return digits ? parseInt(digits[0],10) : null;
+}
 function simulateCanon(canon) {
   const sim = cfgSim();
   const adminRate = (sim.ADMIN_BASE_PCT/100) * (1 + sim.IVA_PCT/100);
@@ -255,13 +277,7 @@ function simulateCanon(canon) {
   return { admin, amparoBasico, amparoIntegral, descMes1, descMesesSig, netoMes1, netoMesesSig };
 }
 
-function extractAmount(text='') {
-  const digits = String(text||'').replace(/[.,]/g,'').match(/\d{5,9}/);
-  return digits ? parseInt(digits[0],10) : null;
-}
-
-
-// ---- Response templates based on prompt ----
+// ---- Response templates ----
 function msgCompanyIntro() {
   const C = cfgCompany();
   const s = `Somos ${C.name}. ${C.desc}\nServicios: ${C.services.join(', ')}.\nOperamos en: ${C.cities.join(', ')}.`;
@@ -294,7 +310,56 @@ async function handleWebhookPayload(payload) {
   const t = (text || '').toLowerCase().trim();
   const name = st.name || user_name || '';
 
-  // ---- Canon simulation intent
+  // ---- Admin-service interest (propietario quiere administración) -> Pitch + Fee
+  if (/(administraci[oó]n.*inmueble|administren ustedes|administrenlo|administre[n]? mi inmueble|administra[r]? mi inmueble|necesito que lo arrienden|entregarles el inmueble|quiero que lo administren|quiero que administren|que lo administren|que administren|manejen mi inmueble|se encarguen de mi inmueble)/.test(t)) {
+    const pitch = (promptCfg.messages && promptCfg.messages.admin_pitch) || '';
+    const fee = (promptCfg.messages && promptCfg.messages.admin_fee) || '';
+    const msg = [namePrefix(name) + '¡Perfecto! Nos encargamos de todo.', pitch, fee, '¿Quieres que haga una simulación con el canon de tu inmueble?'].filter(Boolean).join('\n\n');
+    return { messages: [{ type:'text', text: msg }], quick_replies: ['Simular canon','Hablar con asesor','Ver inmuebles'], context: { session_id: session, lead: { intent: 'admin_service' } } };
+  }
+
+  // ---- Pricing / fees intent (cuánto cobran / comisión / tarifa)
+  if (/(cu[aá]nt[oa]\s*(cobran|cobra|vale|cuesta|cuestan)|tarifa|honorari[oa]s|porcentaje|%|comisi[oó]n)/.test(t)) {
+    const amount = extractAmount(text || '');
+    const feeTxt = (promptCfg.messages && promptCfg.messages.admin_fee) || '';
+    if (amount) {
+      const sim = simulateCanon(amount);
+      const lines = [
+        `${namePrefix(name)}${feeTxt ? feeTxt + '\n\n' : ''}Simulación sobre ${fmtCOP(amount)}:`,
+        `• Administración (${cfgSim().ADMIN_BASE_PCT}% + IVA ${cfgSim().IVA_PCT}%): ${fmtCOP(sim.admin)}`,
+        `• Amparo básico (${cfgSim().AMPARO_BASICO_PCT}%): ${fmtCOP(sim.amparoBasico)}`,
+        `• Primer mes, Amparo integral (${cfgSim().AMPARO_INTEGRAL_PCT}% de canon + SMMLV): ${fmtCOP(sim.amparoIntegral)}`,
+        `\nPrimer mes → Descuento total: ${fmtCOP(sim.descMes1)} | Te quedan: ${fmtCOP(sim.netoMes1)}`,
+        `Meses siguientes → Descuento: ${fmtCOP(sim.descMesesSig)} | Te quedan: ${fmtCOP(sim.netoMesesSig)}`
+      ];
+      return { messages: [{ type:'text', text: lines.join('\n') }], quick_replies: ['Hablar con asesor','Ver inmuebles'], context: { session_id: session } };
+    }
+    const explain = `Nuestra administración se liquida así: Administración ${cfgSim().ADMIN_BASE_PCT}% + IVA ${cfgSim().IVA_PCT}%, Amparo básico ${cfgSim().AMPARO_BASICO_PCT}%, y solo en el primer mes Amparo integral ${cfgSim().AMPARO_INTEGRAL_PCT}% sobre (canon + SMMLV).`;
+    const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'para simular, dime el valor del canon (en números).';
+    const txt = [namePrefix(name) + feeTxt, explain, ask].filter(Boolean).join(' ');
+    return { messages: [{ type:'text', text: txt }], context: { session_id: session } };
+  }
+
+  // ---- Simulation keyword (e.g., "simular")
+  if (/(simulaci[oó]n|simular|simulo|simulemos)/.test(t)) {
+    const amount = extractAmount(text || '');
+    if (amount) {
+      const sim = simulateCanon(amount);
+      const lines = [
+        `${namePrefix(name)}Simulación sobre ${fmtCOP(amount)}:`,
+        `• Administración (${cfgSim().ADMIN_BASE_PCT}% + IVA ${cfgSim().IVA_PCT}%): ${fmtCOP(sim.admin)}`,
+        `• Amparo básico (${cfgSim().AMPARO_BASICO_PCT}%): ${fmtCOP(sim.amparoBasico)}`,
+        `• Primer mes, Amparo integral (${cfgSim().AMPARO_INTEGRAL_PCT}% de canon + SMMLV): ${fmtCOP(sim.amparoIntegral)}`,
+        `\nPrimer mes → Descuento total: ${fmtCOP(sim.descMes1)} | Te quedan: ${fmtCOP(sim.netoMes1)}`,
+        `Meses siguientes → Descuento: ${fmtCOP(sim.descMesesSig)} | Te quedan: ${fmtCOP(sim.netoMesesSig)}`
+      ];
+      return { messages: [{ type:'text', text: lines.join('\n') }], quick_replies: ['Hablar con asesor','Ver inmuebles'], context: { session_id: session } };
+    }
+    const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'para simular, dime el valor del canon (en números).';
+    return { messages: [{ type:'text', text: namePrefix(name) + ask }], context: { session_id: session } };
+  }
+
+  // ---- Canon simulation (when "canon" + number)
   const canonVal = detectCanonValue(text || '');
   if (canonVal) {
     const sim = simulateCanon(canonVal);
@@ -306,96 +371,11 @@ async function handleWebhookPayload(payload) {
       `\nPrimer mes → Descuento total: ${fmtCOP(sim.descMes1)} | Te quedan: ${fmtCOP(sim.netoMes1)}`,
       `Meses siguientes → Descuento: ${fmtCOP(sim.descMesesSig)} | Te quedan: ${fmtCOP(sim.netoMesesSig)}`
     ];
-    return { messages: [{ type:'text', text: lines.join('\n') }], quick_replies: ['Quiero que administren mi inmueble','Ver inmuebles','Hablar con asesor'], context: { session_id: session } };
+    return { messages: [{ type:'text', text: lines.join('\n') }], quick_replies: ['Hablar con asesor','Ver inmuebles'], context: { session_id: session } };
   }
   if (t.includes('canon')) {
     const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'para simular, dime el valor del canon (en números).';
     return { messages: [{ type:'text', text: namePrefix(name) + ask }], context: { session_id: session } };
-  }
-
-  // ---- VIP seller intent
-  if (/(administren ustedes|administrenlo|administre[n]? mi inmueble|administra[r]? mi inmueble|necesito que lo arrienden|entregarles el inmueble|quiero que lo administren|quiero que administren|que lo administren|que administren)/.test(t)) {
-    const vip = (promptCfg.messages && promptCfg.messages.vip_admin) || 'Te daremos trato VIP. ¡Atención personalizada inmediata!';
-    const msg = namePrefix(name) + vip;
-    return { messages: [{ type:'text', text: msg }], quick_replies: ['Hablar con asesor','Simular canon','Ver inmuebles'], context: { session_id: session, lead: { intent: 'admin_service' } } };
-
-  // ---- Pricing / fees intent ("cuánto cobran", "tarifa", "porcentaje", etc.)
-  if (/(cobran|cobra|tarifa|honorarios|porcentaje|por ciento|%|cu[aá]nto cuesta.*administrar|cu[aá]nto cobran)/.test(t)) {
-    const amount = extractAmount(text || '');
-    if (amount) {
-      const sim = simulateCanon(amount);
-      const lines = [
-        `${namePrefix(name)}nuestra administración se calcula así y te dejo la simulación sobre ${fmtCOP(amount)}:`,
-        `• Administración (${cfgSim().ADMIN_BASE_PCT}% + IVA ${cfgSim().IVA_PCT}%): ${fmtCOP(sim.admin)}`,
-        `• Amparo básico (${cfgSim().AMPARO_BASICO_PCT}%): ${fmtCOP(sim.amparoBasico)}`,
-        `• Primer mes, Amparo integral (${cfgSim().AMPARO_INTEGRAL_PCT}% de canon + SMMLV): ${fmtCOP(sim.amparoIntegral)}`,
-        `\nPrimer mes → Descuento total: ${fmtCOP(sim.descMes1)} | Te quedan: ${fmtCOP(sim.netoMes1)}`,
-        `Meses siguientes → Descuento: ${fmtCOP(sim.descMesesSig)} | Te quedan: ${fmtCOP(sim.netoMesesSig)}`
-      ];
-      return { messages: [{ type:'text', text: lines.join('\n') }], quick_replies: ['Quiero que administren mi inmueble','Hablar con asesor'], context: { session_id: session } };
-    }
-    const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'para simular, dime el valor del canon (en números).';
-    const explain = `Nuestra administración se liquida así: Administración ${cfgSim().ADMIN_BASE_PCT}% + IVA ${cfgSim().IVA_PCT}%, Amparo básico ${cfgSim().AMPARO_BASICO_PCT}%, y solo en el primer mes Amparo integral ${cfgSim().AMPARO_INTEGRAL_PCT}% sobre (canon + SMMLV).`;
-    return { messages: [{ type:'text', text: namePrefix(name) + explain + ' ' + ask }], context: { session_id: session } };
-  }
-  }
-
-  // ---- General intents
-  if (/(hola|buenas|buen d[ií]a|buena[s]? tardes?)/.test(t) || /(qu[ié]nes son|a qu[eé] se dedican|qu[eé] hacen)/.test(t)) {
-    return { messages: [{ type:'text', text: namePrefix(name) + msgCompanyIntro() }], quick_replies: ['Ver inmuebles','Vender inmueble','Hablar con asesor'], context: { session_id: session } };
-  }
-  if (/(horario|abren|cierran|hora[s]? de atenci[oó]n)/.test(t)) {
-    return { messages: [{ type:'text', text: namePrefix(name) + msgHours() }], quick_replies: ['Ver inmuebles','Hablar con asesor'], context: { session_id: session } };
-  }
-  if (/(ubicaci[oó]n|direccion|direcci[oó]n|donde estan|dónde est[áa]n|como llegar)/.test(t)) {
-    return { messages: [{ type:'text', text: namePrefix(name) + msgAddress() }], quick_replies: ['Ver inmuebles','Hablar con asesor'], context: { session_id: session } };
-  }
-  if (/(servicio[s]?|que ofrecen|qu[eé] servicios)/.test(t)) {
-    const C = cfgCompany();
-    const s = `Servicios: ${C.services.join(', ')}.`;
-    return { messages: [{ type:'text', text: namePrefix(name) + s }], quick_replies: ['Ver inmuebles','Vender inmueble','Hablar con asesor'], context: { session_id: session } };
-  }
-  if (/(financia|cr[eé]dito|leasing|hipoteca|cuota)/.test(t)) {
-    const s = 'Manejamos opciones de financiación a través de aliados según tu perfil. ¿Quieres que un asesor te contacte para precalificación?';
-    return { messages: [{ type:'text', text: namePrefix(name) + s }], quick_replies: ['Sí, que me contacten','Ver inmuebles'], context: { session_id: session } };
-  }
-  if (/(asesor|humano|agente|contacto|llamar)/.test(t)) {
-    return { messages: [{ type:'text', text: namePrefix(name) + msgTalkToAgent() }], quick_replies: ['Ver inmuebles','Vender inmueble'], context: { session_id: session } };
-  }
-  if (/(habeas|datos personales|privacidad|tratamiento de datos)/.test(t)) {
-    return { messages: [{ type:'text', text: namePrefix(name) + msgPrivacy() }], context: { session_id: session } };
-  }
-// ---- Seller mini-form
-  if (/(vender|quiero vender|publicar|tasaci[oó]n|avalu[oó])/.test(t) || st.expecting?.startsWith('seller_')) {
-    st.seller = st.seller || {};
-    if (!st.seller.tipo && !st.expecting) {
-      st.expecting = 'seller_tipo'; await saveSession(session, st);
-      return { messages: [{ type:'text', text: namePrefix(name) + '¡Perfecto! ¿Qué tipo de inmueble quieres vender? (casa, apartamento, local u otro)' }], context: { session_id: session } };
-    }
-    if (st.expecting === 'seller_tipo') {
-      st.seller.tipo = normalizaTipo(text) || text;
-      st.expecting = 'seller_ciudad'; await saveSession(session, st);
-      return { messages: [{ type:'text', text: namePrefix(name) + '¿En qué ciudad/barrio está ubicado?' }], context: { session_id: session } };
-    }
-    if (st.expecting === 'seller_ciudad') {
-      st.seller.ciudad = text;
-      st.expecting = 'seller_telefono'; await saveSession(session, st);
-      const C = cfgCompany();
-      const hint = C.whatsapp ? ` (o escríbenos a ${C.whatsapp})` : '';
-      return { messages: [{ type:'text', text: namePrefix(name) + '¿Cuál es tu número de contacto?' + hint }], context: { session_id: session } };
-    }
-    if (st.expecting === 'seller_telefono') {
-      st.seller.telefono = text.replace(/[^\d+]/g,'');
-      st.expecting = null; await saveSession(session, st);
-      const resumen = `✔️ Tipo: ${st.seller.tipo}\n📍 Ciudad: ${st.seller.ciudad}\n📞 Tel: ${st.seller.telefono}`;
-      return { messages: [
-          { type:'text', text: namePrefix(name) + '¡Gracias! Un asesor te contactará para valoración y publicación de tu inmueble.' },
-          { type:'text', text: resumen }
-        ],
-        quick_replies: ['Ver inmuebles','Hablar con asesor'],
-        context: { session_id: session, lead: { seller: st.seller } }
-      };
-    }
   }
 
   // ---- Código de inmueble
@@ -449,7 +429,7 @@ async function handleWebhookPayload(payload) {
   }
 
   // ---- Fallback
-  const fb = (promptCfg.messages && promptCfg.messages.fallback) || '¿Deseas que administremos tu inmueble, simular tu canon o consultar un código para ver la ficha?';
+  const fb = (promptCfg.messages && promptCfg.messages.fallback) || '¿Quieres ver inmuebles o vender uno?';
   st.expecting = null; await saveSession(session, st);
   return { messages: [{ type:'text', text: namePrefix(name) + fb }], quick_replies: ['Ver inmuebles','Tengo código','Simular canon','Hablar con asesor'], context: { session_id: session } };
 }
