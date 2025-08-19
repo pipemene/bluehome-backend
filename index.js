@@ -359,7 +359,6 @@ async function handleWebhookPayload(payload) {
     return { messages: menu.messages, quick_replies: menu.quick_replies, context: { session_id: session, lead: { intent: 'admin_service' } } };
   }
 
-  }
 
   // ---- Pricing / fees intent (cuánto cobran / comisión / tarifa)
   if (/(cu[aá]nt[oa]\s*(cobran|cobra|vale|cuesta|cuestan)|tarifa|honorari[oa]s|porcentaje|%|comisi[oó]n)/.test(t)) {
