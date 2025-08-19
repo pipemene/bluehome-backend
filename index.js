@@ -319,7 +319,7 @@ function adminChunk(which) {
 }
 
 // ---- Main controller ----
-async function handleWebhookPayload(payload) {
+async async function handleWebhookPayload(payload) {
   maybeReloadPrompt();
 
   const { contact_id, user_name, text } = payload || {};
