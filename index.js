@@ -255,6 +255,12 @@ function simulateCanon(canon) {
   return { admin, amparoBasico, amparoIntegral, descMes1, descMesesSig, netoMes1, netoMesesSig };
 }
 
+function extractAmount(text='') {
+  const digits = String(text||'').replace(/[.,]/g,'').match(/\d{5,9}/);
+  return digits ? parseInt(digits[0],10) : null;
+}
+
+
 // ---- Response templates based on prompt ----
 function msgCompanyIntro() {
   const C = cfgCompany();
@@ -308,10 +314,30 @@ async function handleWebhookPayload(payload) {
   }
 
   // ---- VIP seller intent
-  if (/(administren ustedes|administrenlo|administre[n]? mi inmueble|administra[r]? mi inmueble|necesito que lo arrienden|entregarles el inmueble|quiero que lo administren|quiero que administren)/.test(t)) {
+  if (/(administren ustedes|administrenlo|administre[n]? mi inmueble|administra[r]? mi inmueble|necesito que lo arrienden|entregarles el inmueble|quiero que lo administren|quiero que administren|que lo administren|que administren)/.test(t)) {
     const vip = (promptCfg.messages && promptCfg.messages.vip_admin) || 'Te daremos trato VIP. ¡Atención personalizada inmediata!';
     const msg = namePrefix(name) + vip;
     return { messages: [{ type:'text', text: msg }], quick_replies: ['Hablar con asesor','Simular canon','Ver inmuebles'], context: { session_id: session, lead: { intent: 'admin_service' } } };
+
+  // ---- Pricing / fees intent ("cuánto cobran", "tarifa", "porcentaje", etc.)
+  if (/(cobran|cobra|tarifa|honorarios|porcentaje|por ciento|%|cu[aá]nto cuesta.*administrar|cu[aá]nto cobran)/.test(t)) {
+    const amount = extractAmount(text || '');
+    if (amount) {
+      const sim = simulateCanon(amount);
+      const lines = [
+        `${namePrefix(name)}nuestra administración se calcula así y te dejo la simulación sobre ${fmtCOP(amount)}:`,
+        `• Administración (${cfgSim().ADMIN_BASE_PCT}% + IVA ${cfgSim().IVA_PCT}%): ${fmtCOP(sim.admin)}`,
+        `• Amparo básico (${cfgSim().AMPARO_BASICO_PCT}%): ${fmtCOP(sim.amparoBasico)}`,
+        `• Primer mes, Amparo integral (${cfgSim().AMPARO_INTEGRAL_PCT}% de canon + SMMLV): ${fmtCOP(sim.amparoIntegral)}`,
+        `\nPrimer mes → Descuento total: ${fmtCOP(sim.descMes1)} | Te quedan: ${fmtCOP(sim.netoMes1)}`,
+        `Meses siguientes → Descuento: ${fmtCOP(sim.descMesesSig)} | Te quedan: ${fmtCOP(sim.netoMesesSig)}`
+      ];
+      return { messages: [{ type:'text', text: lines.join('\n') }], quick_replies: ['Quiero que administren mi inmueble','Hablar con asesor'], context: { session_id: session } };
+    }
+    const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'para simular, dime el valor del canon (en números).';
+    const explain = `Nuestra administración se liquida así: Administración ${cfgSim().ADMIN_BASE_PCT}% + IVA ${cfgSim().IVA_PCT}%, Amparo básico ${cfgSim().AMPARO_BASICO_PCT}%, y solo en el primer mes Amparo integral ${cfgSim().AMPARO_INTEGRAL_PCT}% sobre (canon + SMMLV).`;
+    return { messages: [{ type:'text', text: namePrefix(name) + explain + ' ' + ask }], context: { session_id: session } };
+  }
   }
 
   // ---- General intents
