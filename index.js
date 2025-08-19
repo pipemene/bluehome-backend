@@ -289,6 +289,26 @@ function msgAddress() { const C = cfgCompany(); return C.address ? `📍 Direcci
 function msgTalkToAgent() { const C = cfgCompany(); const lines = ['Te conecto con un asesor.']; if (C.whatsapp) lines.push(`WhatsApp: ${C.whatsapp}`); if (C.phone) lines.push(`Tel: ${C.phone}`); return lines.join('\n'); }
 function msgPrivacy() { const C = cfgCompany(); return C.privacy ? `🔐 Tratamiento de datos: ${C.privacy}` : '🔐 Tratamiento de datos según ley 1581 de 2012.'; }
 
+
+// ---- Admin staged helpers ----
+function adminMenu() {
+  const m = promptCfg.messages || {};
+  const intro = m.admin_intro_short || 'Nos encargamos de todo.';
+  const menu = m.admin_menu || '¿Qué te gustaría saber primero?';
+  const opts = m.admin_menu_options || ['Costos','Cómo trabajamos','Oficina Virtual','Simular canon'];
+  return {
+    messages: [{ type:'text', text: intro }, { type:'text', text: menu }],
+    quick_replies: opts
+  };
+}
+function adminChunk(which) {
+  const m = promptCfg.messages || {};
+  if (/costos|precio|tarifa|comisi/.test(which)) return m.admin_chunk_costos || (m.admin_fee || '');
+  if (/oficina|virtual|cuenta|factura/.test(which)) return m.admin_chunk_oficina || '';
+  // default to operacion
+  return m.admin_chunk_operacion || (m.admin_pitch || '');
+}
+
 // ---- Main controller ----
 async function handleWebhookPayload(payload) {
   maybeReloadPrompt();
@@ -310,12 +330,14 @@ async function handleWebhookPayload(payload) {
   const t = (text || '').toLowerCase().trim();
   const name = st.name || user_name || '';
 
-  // ---- Admin-service interest (propietario quiere administración) -> Pitch + Fee
+  
+  // ---- Admin-service interest (staged)
   if (/(administraci[oó]n.*inmueble|administren ustedes|administrenlo|administre[n]? mi inmueble|administra[r]? mi inmueble|necesito que lo arrienden|entregarles el inmueble|quiero que lo administren|quiero que administren|que lo administren|que administren|manejen mi inmueble|se encarguen de mi inmueble)/.test(t)) {
-    const pitch = (promptCfg.messages && promptCfg.messages.admin_pitch) || '';
-    const fee = (promptCfg.messages && promptCfg.messages.admin_fee) || '';
-    const msg = [namePrefix(name) + '¡Perfecto! Nos encargamos de todo.', pitch, fee, '¿Quieres que haga una simulación con el canon de tu inmueble?'].filter(Boolean).join('\n\n');
-    return { messages: [{ type:'text', text: msg }], quick_replies: ['Simular canon','Hablar con asesor','Ver inmuebles'], context: { session_id: session, lead: { intent: 'admin_service' } } };
+    st.lastIntent = 'admin'; st.adminStage = 'menu'; await saveSession(session, st);
+    const menu = adminMenu();
+    return { messages: menu.messages, quick_replies: menu.quick_replies, context: { session_id: session, lead: { intent: 'admin_service' } } };
+  }
+
   }
 
   // ---- Pricing / fees intent (cuánto cobran / comisión / tarifa)
@@ -340,7 +362,56 @@ async function handleWebhookPayload(payload) {
     return { messages: [{ type:'text', text: txt }], context: { session_id: session } };
   }
 
-  // ---- Simulation keyword (e.g., "simular")
+  
+  // ---- Admin staged follow-ups
+  if (st.adminStage === 'menu') {
+    if (/(costos|precio|tarifa|comisi[oó]n)/.test(t)) {
+      st.adminStage = 'after_costos'; await saveSession(session, st);
+      const chunk = adminChunk('costos');
+      return { messages: [{ type:'text', text: namePrefix(name) + chunk }], quick_replies: ['Simular canon','Cómo trabajamos','Oficina Virtual','Hablar con asesor'], context: { session_id: session } };
+    }
+    if (/(c[oó]mo trabaj|operaci[oó]n|publicaci[oó]n|qr|video)/.test(t)) {
+      st.adminStage = 'after_operacion'; await saveSession(session, st);
+      const chunk = adminChunk('operacion');
+      return { messages: [{ type:'text', text: namePrefix(name) + chunk }], quick_replies: ['Costos','Oficina Virtual','Simular canon','Hablar con asesor'], context: { session_id: session } };
+    }
+    if (/(oficina|virtual|cuenta|factura|estado)/.test(t)) {
+      st.adminStage = 'after_oficina'; await saveSession(session, st);
+      const chunk = adminChunk('oficina');
+      return { messages: [{ type:'text', text: namePrefix(name) + chunk }], quick_replies: ['Costos','Cómo trabajamos','Simular canon','Hablar con asesor'], context: { session_id: session } };
+    }
+    if (/(simulaci[oó]n|simular|canon)/.test(t)) {
+      st.adminStage = 'ask_canon'; await saveSession(session, st);
+      const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'para simular, dime el valor del canon (en números).';
+      return { messages: [{ type:'text', text: namePrefix(name) + ask }], context: { session_id: session } };
+    }
+    // If the user clicks one of the menu quick replies exactly
+    const m = (promptCfg.messages && promptCfg.messages.admin_menu_options) || ['Costos','Cómo trabajamos','Oficina Virtual','Simular canon'];
+    if (m.some(x => t === String(x).toLowerCase())) {
+      if (t.includes('costos')) { st.adminStage = 'after_costos'; await saveSession(session, st); const chunk = adminChunk('costos'); return { messages: [{type:'text', text: namePrefix(name)+chunk}], quick_replies: ['Simular canon','Cómo trabajamos','Oficina Virtual','Hablar con asesor'], context: { session_id: session } }; }
+      if (t.includes('trabaj')) { st.adminStage = 'after_operacion'; await saveSession(session, st); const chunk = adminChunk('operacion'); return { messages: [{type:'text', text: namePrefix(name)+chunk}], quick_replies: ['Costos','Oficina Virtual','Simular canon','Hablar con asesor'], context: { session_id: session } }; }
+      if (t.includes('oficina')) { st.adminStage = 'after_oficina'; await saveSession(session, st); const chunk = adminChunk('oficina'); return { messages: [{type:'text', text: namePrefix(name)+chunk}], quick_replies: ['Costos','Cómo trabajamos','Simular canon','Hablar con asesor'], context: { session_id: session } }; }
+      if (t.includes('simular')) { st.adminStage = 'ask_canon'; await saveSession(session, st); const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'para simular, dime el valor del canon (en números).'; return { messages: [{type:'text', text: namePrefix(name)+ask}], context: { session_id: session } }; }
+    }
+  }
+  if (st.adminStage === 'ask_canon') {
+    const amount = extractAmount(text || '');
+    if (!amount) { const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'para simular, dime el valor del canon (en números).'; return { messages: [{ type:'text', text: namePrefix(name) + ask }], context: { session_id: session } }; }
+    const sim = simulateCanon(amount);
+    const lines = [
+      `${namePrefix(name)}Simulación sobre ${fmtCOP(amount)}:`,
+      `• Administración (${cfgSim().ADMIN_BASE_PCT}% + IVA ${cfgSim().IVA_PCT}%): ${fmtCOP(sim.admin)}`,
+      `• Amparo básico (${cfgSim().AMPARO_BASICO_PCT}%): ${fmtCOP(sim.amparoBasico)}`,
+      `• Primer mes, Amparo integral (${cfgSim().AMPARO_INTEGRAL_PCT}% de canon + SMMLV): ${fmtCOP(sim.amparoIntegral)}`,
+      `\nPrimer mes → Descuento total: ${fmtCOP(sim.descMes1)} | Te quedan: ${fmtCOP(sim.netoMes1)}`,
+      `Meses siguientes → Descuento: ${fmtCOP(sim.descMesesSig)} | Te quedan: ${fmtCOP(sim.netoMesesSig)}`
+    ];
+    st.adminStage = 'menu'; await saveSession(session, st);
+    const menu = adminMenu();
+    return { messages: [{ type:'text', text: lines.join('\\n') }, ...menu.messages], quick_replies: menu.quick_replies, context: { session_id: session } };
+  }
+
+// ---- Simulation keyword (e.g., "simular")
   if (/(simulaci[oó]n|simular|simulo|simulemos)/.test(t)) {
     const amount = extractAmount(text || '');
     if (amount) {
@@ -383,7 +454,7 @@ async function handleWebhookPayload(payload) {
     st.expecting = 'code'; await saveSession(session, st);
     return { messages: [{ type:'text', text: namePrefix(name) + 'Puedo consultar nuestro Google Sheets. Dime el código (1 a 4 dígitos) y te comparto la información.' }], context: { session_id: session } };
   }
-  const code = extractCode(text, st.expecting === 'code');
+  const code = (st.adminStage ? '' : extractCode(text, st.expecting === 'code'));
   if (code) {
     const p = await propertyByCodeLoose(code);
     if (!p) {

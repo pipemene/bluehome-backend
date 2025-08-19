@@ -36,6 +36,17 @@
     "ask_canon_value": "Para simular, dime el valor del canon (en números).",
     "fallback": "¿Deseas que administremos tu inmueble, simular tu canon o consultar un código para ver la ficha?",
     "admin_pitch": "• Publicamos con alcance y respuesta rápida.\n• Letreros con **código QR** que dirige 24/7 a nuestro chatbot: ficha técnica + video **4K** del inmueble.\n• El interesado puede **hacer el estudio de arrendamiento gratis y 100% digital**, a cualquier hora.\n• **Oficina Virtual para propietarios** en nuestra web: descarga de **estados de cuenta, facturas y seguimiento** 24/7.\n• Somos fuertes en alquiler: procesos ágiles, seguimiento y reportes claros.\n• Atención **lunes a domingo** (excepto festivos) y canales digitales 24/7.",
-    "admin_fee": "📊 Comisión de administración: **10.5% + IVA (≈12.5%)** sobre el canon mensual. Incluye difusión y atención a interesados, evaluación 100% digital, gestión contractual, recaudo y reportes en tu Oficina Virtual."
+    "admin_fee": "📊 Comisión de administración: **10.5% + IVA (≈12.5%)** sobre el canon mensual. Incluye difusión y atención a interesados, evaluación 100% digital, gestión contractual, recaudo y reportes en tu Oficina Virtual.",
+    "admin_intro_short": "¡Perfecto! Nos encargamos de todo para que no tengas que preocuparte.",
+    "admin_menu": "¿Qué te gustaría saber primero?",
+    "admin_menu_options": [
+      "Costos",
+      "Cómo trabajamos",
+      "Oficina Virtual",
+      "Simular canon"
+    ],
+    "admin_chunk_costos": "📊 Comisión: **10.5% + IVA (≈12.5%)** del canon mensual. Incluye evaluación 100% digital, gestión contractual, recaudo y reportes.",
+    "admin_chunk_operacion": "🔁 Cómo trabajamos: publicamos con alcance y respuesta rápida, letreros con **QR** que llevan al chatbot 24/7 con ficha y **video 4K**, y atendemos de **lunes a domingo** (excepto festivos).",
+    "admin_chunk_oficina": "💻 **Oficina Virtual**: en nuestra web descargas **estados de cuenta, facturas y seguimiento** 24/7."
   }
 }
