@@ -365,8 +365,7 @@ async function handleWebhookPayload(payload) {
   if (/(habeas|datos personales|privacidad|tratamiento de datos)/.test(t)) {
     return { messages: [{ type:'text', text: namePrefix(name) + msgPrivacy() }], context: { session_id: session } };
   }
-
-  // ---- Seller mini-form
+// ---- Seller mini-form
   if (/(vender|quiero vender|publicar|tasaci[oó]n|avalu[oó])/.test(t) || st.expecting?.startsWith('seller_')) {
     st.seller = st.seller || {};
     if (!st.seller.tipo && !st.expecting) {
@@ -450,7 +449,7 @@ async function handleWebhookPayload(payload) {
   }
 
   // ---- Fallback
-  const fb = (promptCfg.messages && promptCfg.messages.fallback) || '¿Quieres ver inmuebles o vender uno?';
+  const fb = (promptCfg.messages && promptCfg.messages.fallback) || '¿Deseas que administremos tu inmueble, simular tu canon o consultar un código para ver la ficha?';
   st.expecting = null; await saveSession(session, st);
   return { messages: [{ type:'text', text: namePrefix(name) + fb }], quick_replies: ['Ver inmuebles','Tengo código','Simular canon','Hablar con asesor'], context: { session_id: session } };
 }

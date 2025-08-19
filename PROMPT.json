@@ -35,7 +35,8 @@
   "messages": {
     "vip_admin": "¡Claro que sí! Te daremos trato VIP: te sentirás respaldado por nuestras plataformas y reportes claros. Tu confianza es nuestro mayor compromiso.\n\nNota Interna: Este cliente está interesado en entregar su inmueble. ¡Atención personalizada inmediata!",
     "ask_canon_value": "Para simular, dime el valor del canon (en números).",
-    "fallback": "¿Deseas que administremos tu inmueble, simular tu canon o consultar un código para ver la ficha?"
+    "fallback": "¿Deseas que administremos tu inmueble, simular tu canon o consultar un código para ver la ficha?",
+    "admin_pitch": "• Publicamos con alcance y respuesta rápida.\n• Letreros con **código QR** que dirige 24/7 a nuestro chatbot: ficha técnica + video **4K** del inmueble.\n• El interesado puede **hacer el estudio de arrendamiento gratis y 100% digital**, a cualquier hora.\n• Somos fuertes en alquiler: procesos ágiles, seguimiento y reportes claros.\n• Atención **lunes a domingo** (excepto festivos) y canales digitales 24/7.\n¿Quieres una simulación de lo que te queda mes a mes?"
   },
   "policies": {
     "code_lookup": "Si se solicita información sobre un código de inmueble, indica que puedes consultar el Google Sheets y entregar la información si el código es válido.",
