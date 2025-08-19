@@ -325,10 +325,10 @@ async function handleWebhookPayload(payload) {
   const { contact_id, user_name, text } = payload || {};
   const session = String(contact_id || user_name || 'anon');
   const st = await loadSession(session);
-  if (user_name && !st.name) { st.name = user_name; await saveSession(session, st); }
+  if (user_name && !st.name) { st.name = user_name; saveSession(session, st); }
 
   if (wantsReset(text)) {
-    await resetSession(session);
+    resetSession(session);
     return {
       messages: [{ type: 'text', text: 'Contexto reiniciado. ¿Tienes código de inmueble o deseas buscar por filtros?' }],
       quick_replies: ['Tengo código', 'Buscar por filtros', 'Hablar con asesor'],
@@ -340,12 +340,12 @@ async function handleWebhookPayload(payload) {
 
   // Role quick replies / entry routing
   if (t === 'soy propietario') {
-    st.lastIntent = 'admin'; st.adminStage = 'menu'; await saveSession(session, st);
+    st.lastIntent = 'admin'; st.adminStage = 'menu'; saveSession(session, st);
     const menu = adminMenu();
     return { messages: menu.messages, quick_replies: menu.quick_replies, context: { session_id: session } };
   }
   if (t === 'soy inquilino') {
-    st.expecting = 'type'; await saveSession(session, st);
+    st.expecting = 'type'; saveSession(session, st);
     return { messages: [{ type:'text', text: namePrefix(name) + '¿Tienes código o prefieres buscar por filtros?' }], quick_replies: ['Tengo código','Buscar por filtros'] , context: { session_id: session } };
   }
 
@@ -354,7 +354,7 @@ async function handleWebhookPayload(payload) {
   
   // ---- Admin-service interest (staged)
   if (/(administraci[oó]n.*inmueble|administren ustedes|administrenlo|administre[n]? mi inmueble|administra[r]? mi inmueble|necesito que lo arrienden|entregarles el inmueble|quiero que lo administren|quiero que administren|que lo administren|que administren|manejen mi inmueble|se encarguen de mi inmueble)/.test(t)) {
-    st.lastIntent = 'admin'; st.adminStage = 'menu'; await saveSession(session, st);
+    st.lastIntent = 'admin'; st.adminStage = 'menu'; saveSession(session, st);
     const menu = adminMenu();
     return { messages: menu.messages, quick_replies: menu.quick_replies, context: { session_id: session, lead: { intent: 'admin_service' } } };
   }
@@ -387,32 +387,32 @@ async function handleWebhookPayload(payload) {
   // ---- Admin staged follow-ups
   if (st.adminStage === 'menu') {
     if (/(costos|precio|tarifa|comisi[oó]n)/.test(t)) {
-      st.adminStage = 'after_costos'; await saveSession(session, st);
+      st.adminStage = 'after_costos'; saveSession(session, st);
       const chunk = adminChunk('costos');
       return { messages: [{ type:'text', text: namePrefix(name) + chunk }], quick_replies: ['Simular canon','Cómo trabajamos','Oficina Virtual','Hablar con asesor'], context: { session_id: session } };
     }
     if (/(c[oó]mo trabaj|operaci[oó]n|publicaci[oó]n|qr|video)/.test(t)) {
-      st.adminStage = 'after_operacion'; await saveSession(session, st);
+      st.adminStage = 'after_operacion'; saveSession(session, st);
       const chunk = adminChunk('operacion');
       return { messages: [{ type:'text', text: namePrefix(name) + chunk }], quick_replies: ['Costos','Oficina Virtual','Simular canon','Hablar con asesor'], context: { session_id: session } };
     }
     if (/(oficina|virtual|cuenta|factura|estado)/.test(t)) {
-      st.adminStage = 'after_oficina'; await saveSession(session, st);
+      st.adminStage = 'after_oficina'; saveSession(session, st);
       const chunk = adminChunk('oficina');
       return { messages: [{ type:'text', text: namePrefix(name) + chunk }], quick_replies: ['Costos','Cómo trabajamos','Simular canon','Hablar con asesor'], context: { session_id: session } };
     }
     if (/(simulaci[oó]n|simular|canon)/.test(t)) {
-      st.adminStage = 'ask_canon'; await saveSession(session, st);
+      st.adminStage = 'ask_canon'; saveSession(session, st);
       const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'para simular, dime el valor del canon (en números).';
       return { messages: [{ type:'text', text: namePrefix(name) + ask }], context: { session_id: session } };
     }
     // If the user clicks one of the menu quick replies exactly
     const m = (promptCfg.messages && promptCfg.messages.admin_menu_options) || ['Costos','Cómo trabajamos','Oficina Virtual','Simular canon'];
     if (m.some(x => t === String(x).toLowerCase())) {
-      if (t.includes('costos')) { st.adminStage = 'after_costos'; await saveSession(session, st); const chunk = adminChunk('costos'); return { messages: [{type:'text', text: namePrefix(name)+chunk}], quick_replies: ['Simular canon','Cómo trabajamos','Oficina Virtual','Hablar con asesor'], context: { session_id: session } }; }
-      if (t.includes('trabaj')) { st.adminStage = 'after_operacion'; await saveSession(session, st); const chunk = adminChunk('operacion'); return { messages: [{type:'text', text: namePrefix(name)+chunk}], quick_replies: ['Costos','Oficina Virtual','Simular canon','Hablar con asesor'], context: { session_id: session } }; }
-      if (t.includes('oficina')) { st.adminStage = 'after_oficina'; await saveSession(session, st); const chunk = adminChunk('oficina'); return { messages: [{type:'text', text: namePrefix(name)+chunk}], quick_replies: ['Costos','Cómo trabajamos','Simular canon','Hablar con asesor'], context: { session_id: session } }; }
-      if (t.includes('simular')) { st.adminStage = 'ask_canon'; await saveSession(session, st); const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'para simular, dime el valor del canon (en números).'; return { messages: [{type:'text', text: namePrefix(name)+ask}], context: { session_id: session } }; }
+      if (t.includes('costos')) { st.adminStage = 'after_costos'; saveSession(session, st); const chunk = adminChunk('costos'); return { messages: [{type:'text', text: namePrefix(name)+chunk}], quick_replies: ['Simular canon','Cómo trabajamos','Oficina Virtual','Hablar con asesor'], context: { session_id: session } }; }
+      if (t.includes('trabaj')) { st.adminStage = 'after_operacion'; saveSession(session, st); const chunk = adminChunk('operacion'); return { messages: [{type:'text', text: namePrefix(name)+chunk}], quick_replies: ['Costos','Oficina Virtual','Simular canon','Hablar con asesor'], context: { session_id: session } }; }
+      if (t.includes('oficina')) { st.adminStage = 'after_oficina'; saveSession(session, st); const chunk = adminChunk('oficina'); return { messages: [{type:'text', text: namePrefix(name)+chunk}], quick_replies: ['Costos','Cómo trabajamos','Simular canon','Hablar con asesor'], context: { session_id: session } }; }
+      if (t.includes('simular')) { st.adminStage = 'ask_canon'; saveSession(session, st); const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'para simular, dime el valor del canon (en números).'; return { messages: [{type:'text', text: namePrefix(name)+ask}], context: { session_id: session } }; }
     }
   }
   if (st.adminStage === 'ask_canon') {
@@ -427,7 +427,7 @@ async function handleWebhookPayload(payload) {
       `\nPrimer mes → Descuento total: ${fmtCOP(sim.descMes1)} | Te quedan: ${fmtCOP(sim.netoMes1)}`,
       `Meses siguientes → Descuento: ${fmtCOP(sim.descMesesSig)} | Te quedan: ${fmtCOP(sim.netoMesesSig)}`
     ];
-    st.adminStage = 'menu'; await saveSession(session, st);
+    st.adminStage = 'menu'; saveSession(session, st);
     const menu = adminMenu();
     return { messages: [{ type:'text', text: lines.join('\\n') }, ...menu.messages], quick_replies: menu.quick_replies, context: { session_id: session } };
   }
@@ -472,14 +472,14 @@ async function handleWebhookPayload(payload) {
 
   // ---- Código de inmueble
   if (/\bc(ó|o)digo\b/.test(t) && !/\d{1,4}/.test(t)) {
-    st.expecting = 'code'; await saveSession(session, st);
+    st.expecting = 'code'; saveSession(session, st);
     return { messages: [{ type:'text', text: namePrefix(name) + 'Puedo consultar nuestro Google Sheets. Dime el código (1 a 4 dígitos) y te comparto la información.' }], context: { session_id: session } };
   }
   const code = (st.adminStage ? '' : extractCode(text, st.expecting === 'code'));
   if (code) {
     const p = await propertyByCodeLoose(code);
     if (!p) {
-      st.expecting = 'code'; await saveSession(session, st);
+      st.expecting = 'code'; saveSession(session, st);
       return { messages: [{ type:'text', text: namePrefix(name) + `No encuentro el código ${code}. Verifica el número o intenta otro.` }], quick_replies: ['Intentar otro código','Buscar por filtros'], context: { session_id: session } };
     }
     if (DEBUG_YT) console.log('[YOUTUBE_CHECK] webhook code=%s youtube=%s', code, p.youtube || '');
@@ -489,28 +489,28 @@ async function handleWebhookPayload(payload) {
           { type:'text', text: '¿Deseas buscar por filtros para mostrarte opciones similares?' }
         ], quick_replies: ['Sí, buscar por filtros','Hablar con asesor'], context: { session_id: session } };
     }
-    st.expecting = null; st.lastIntent = 'property_by_code'; await saveSession(session, st);
+    st.expecting = null; st.lastIntent = 'property_by_code'; saveSession(session, st);
     return { messages: [{ type:'text', text: renderProperty(p) }], quick_replies: ['Agendar visita','Ver más opciones','Hablar con asesor'], context: { session_id: session } };
   }
 
   // ---- Filters/catalog
   if (/(buscar|busco|filtrar|filtro|filtros|otro inmueble|otra opcion|otra opción|mas opciones|más opciones|ver mas|ver más|siguiente|otro|ver inmuebles|portafolio)/.test(t) || st.expecting === 'type' || st.expecting === 'budget' || st.expecting === 'rooms') {
     let tipo = st.filters.tipo || normalizaTipo(text);
-    if (!tipo) { st.expecting = 'type'; await saveSession(session, st); return { messages: [{ type:'text', text: namePrefix(name) + '¿Qué tipo buscas? (casa, apartamento, apartaestudio o local)' }], context: { session_id: session } }; }
-    st.filters.tipo = tipo; await saveSession(session, st);
+    if (!tipo) { st.expecting = 'type'; saveSession(session, st); return { messages: [{ type:'text', text: namePrefix(name) + '¿Qué tipo buscas? (casa, apartamento, apartaestudio o local)' }], context: { session_id: session } }; }
+    st.filters.tipo = tipo; saveSession(session, st);
     if (!st.filters.presupuesto || st.expecting === 'budget') {
       const pres = toNumber(text);
-      if (pres) { st.filters.presupuesto = pres; await saveSession(session, st); }
-      else { st.expecting = 'budget'; await saveSession(session, st); return { messages: [{ type:'text', text: namePrefix(name) + '¿Cuál es tu presupuesto máximo (en pesos)?' }], context: { session_id: session } }; }
+      if (pres) { st.filters.presupuesto = pres; saveSession(session, st); }
+      else { st.expecting = 'budget'; saveSession(session, st); return { messages: [{ type:'text', text: namePrefix(name) + '¿Cuál es tu presupuesto máximo (en pesos)?' }], context: { session_id: session } }; }
     }
     const necesitaHabs = !(st.filters.tipo === 'apartaestudio' || st.filters.tipo === 'local');
     if (necesitaHabs && (!st.filters.habitaciones || st.expecting === 'rooms')) {
       const habs = toNumber(text);
-      if (habs) { st.filters.habitaciones = habs; await saveSession(session, st); }
-      else { st.expecting = 'rooms'; await saveSession(session, st); return { messages: [{ type:'text', text: namePrefix(name) + '¿Cuántas habitaciones mínimo?' }], context: { session_id: session } }; }
+      if (habs) { st.filters.habitaciones = habs; saveSession(session, st); }
+      else { st.expecting = 'rooms'; saveSession(session, st); return { messages: [{ type:'text', text: namePrefix(name) + '¿Cuántas habitaciones mínimo?' }], context: { session_id: session } }; }
     }
     const results = await searchProperties({ tipo: st.filters.tipo, presupuesto: st.filters.presupuesto, habitaciones: necesitaHabs ? st.filters.habitaciones : 0 });
-    st.expecting = null; st.lastIntent = 'search_by_filters'; await saveSession(session, st);
+    st.expecting = null; st.lastIntent = 'search_by_filters'; saveSession(session, st);
     if (!results.length) {
       return { messages: [
         { type:'text', text: namePrefix(name) + 'No encontré inmuebles disponibles que coincidan con tu búsqueda.' },
