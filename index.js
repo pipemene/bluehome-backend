@@ -131,12 +131,12 @@ async function loadSession(sessionId) {
   catch (e) { console.error('[redis] load error', e.message); }
   return stateByUser.get(sessionId) || { expecting: null, filters: {}, seller: {}, name: '' };
 }
-async function await saveSession(sessionId, state) {
+async function saveSession(sessionId, state) {
   try { if (redis) await redis.set(`sess:${sessionId}`, JSON.stringify(state), 'EX', SESSION_TTL_SECONDS); }
   catch (e) { console.error('[redis] save error', e.message); }
   stateByUser.set(sessionId, state);
 }
-async function await resetSession(sessionId) {
+async function resetSession(sessionId) {
   try { if (redis) await redis.del(`sess:${sessionId}`); } catch (e) { console.error('[redis] del error', e.message); }
   stateByUser.delete(sessionId);
 }
@@ -319,7 +319,7 @@ function adminChunk(which) {
 }
 
 // ---- Main controller ----
-async async function handleWebhookPayload(payload) {
+async function handleWebhookPayload(payload) {
   maybeReloadPrompt();
 
   const { contact_id, user_name, text } = payload || {};
