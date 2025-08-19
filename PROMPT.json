@@ -1,0 +1,40 @@
+{
+  "identity": {
+    "assistant_name": "MarianAI",
+    "company_name": "Blue Home Inmobiliaria",
+    "description": "Empresa premium en administración de propiedades.",
+    "location": "Palmira, Colombia"
+  },
+  "tone": "breve, profesional y cercana",
+  "services": [
+    "Administración",
+    "Arriendo",
+    "Venta",
+    "Avalúos"
+  ],
+  "contact": {
+    "cities": [
+      "Palmira",
+      "Cali"
+    ],
+    "hours": "Lun-Vie 9:00-18:00, Sáb 9:00-13:00",
+    "address": "Palmira, Valle del Cauca",
+    "whatsapp": "+57 300 000 0000",
+    "phone": "(602) 000 0000",
+    "email": "contacto@bluehome.com",
+    "website": "https://bluehome.com",
+    "privacy_url": "https://bluehome.com/habeas-data"
+  },
+  "simulation": {
+    "smmlv": 1423500,
+    "admin_base_pct": 10.5,
+    "iva_pct": 19,
+    "amparo_basico_pct": 2.05,
+    "amparo_integral_pct": 12.31
+  },
+  "messages": {
+    "vip_admin": "¡claro que sí! Te daremos trato VIP: plataformas de publicación, seguimiento y reportes claros. Tu confianza es nuestro mayor compromiso.\n\nNota Interna: Este cliente está interesado en entregar su inmueble. ¡Atención personalizada inmediata!",
+    "ask_canon_value": "para simular, dime el valor del canon (en números).",
+    "fallback": "¿Quieres ver inmuebles o vender uno? También puedo simular descuentos de tu canon, darte horarios, dirección o ponerte con un asesor."
+  }
+}

@@ -3,10 +3,85 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const Papa = require('papaparse');
+const fs = require('fs');
+const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 const SHEETS_CSV_URL = process.env.SHEETS_CSV_URL || '';
 const DEBUG_YT = String(process.env.DEBUG_YT || 'false').toLowerCase() === 'true';
+
+// ---- PROMPT Loader ----
+const PROMPT_FILE = process.env.PROMPT_FILE || path.join(__dirname, 'PROMPT.json');
+const PROMPT_AUTO_RELOAD = String(process.env.PROMPT_AUTO_RELOAD || 'true').toLowerCase() === 'true';
+const PROMPT_URL = process.env.PROMPT_URL || '';
+
+let promptCfg = {
+  identity: { assistant_name: 'MarianAI', company_name: 'Blue Home Inmobiliaria', description: 'Empresa premium en administración de propiedades.', location: 'Palmira, Colombia' },
+  tone: 'breve, profesional y cercana',
+  services: ['Administración','Arriendo','Venta','Avalúos'],
+  contact: { cities: ['Palmira','Cali'], hours: 'Lun-Vie 9:00-18:00, Sáb 9:00-13:00', address: 'Palmira, Valle del Cauca', whatsapp: '', phone: '', email: '', website: '', privacy_url: '' },
+  simulation: { smmlv: 1423500, admin_base_pct: 10.5, iva_pct: 19, amparo_basico_pct: 2.05, amparo_integral_pct: 12.31 },
+  messages: {
+    vip_admin: '¡claro que sí! Te daremos trato VIP: plataformas de publicación, seguimiento y reportes claros. Tu confianza es nuestro mayor compromiso.\n\nNota Interna: Este cliente está interesado en entregar su inmueble. ¡Atención personalizada inmediata!',
+    ask_canon_value: 'para simular, dime el valor del canon (en números).',
+    fallback: '¿Quieres ver inmuebles o vender uno? También puedo simular descuentos de tu canon, darte horarios, dirección o ponerte con un asesor.'
+  }
+};
+
+let promptMeta = { source: PROMPT_FILE, mtimeMs: 0, loadedAt: 0, remote: false, ok: false, error: null };
+
+async function fetchRemotePrompt(url) {
+  try {
+    const resp = await axios.get(url, { timeout: 8000 });
+    if (typeof resp.data === 'object') return resp.data;
+    return JSON.parse(resp.data);
+  } catch (e) {
+    throw new Error('PROMPT_URL fetch failed: ' + e.message);
+  }
+}
+function mergeDeep(target, source) {
+  for (const k of Object.keys(source || {})) {
+    if (source[k] && typeof source[k] === 'object' && !Array.isArray(source[k])) {
+      target[k] = mergeDeep(target[k] || {}, source[k]);
+    } else {
+      target[k] = source[k];
+    }
+  }
+  return target;
+}
+async function loadPrompt(force=false) {
+  try {
+    if (PROMPT_URL) {
+      const data = await fetchRemotePrompt(PROMPT_URL);
+      promptCfg = mergeDeep(promptCfg, data || {});
+      promptMeta = { source: PROMPT_URL, mtimeMs: Date.now(), loadedAt: Date.now(), remote: true, ok: true, error: null };
+      return;
+    }
+    const p = PROMPT_FILE;
+    if (!fs.existsSync(p)) throw new Error('PROMPT_FILE not found: ' + p);
+    const stat = fs.statSync(p);
+    if (!force && promptMeta.mtimeMs === stat.mtimeMs) return;
+    const raw = fs.readFileSync(p, 'utf8');
+    const data = JSON.parse(raw);
+    promptCfg = mergeDeep(promptCfg, data || {});
+    promptMeta = { source: p, mtimeMs: stat.mtimeMs, loadedAt: Date.now(), remote: false, ok: true, error: null };
+  } catch (e) {
+    promptMeta = { ...promptMeta, ok: false, error: e.message, loadedAt: Date.now() };
+    console.error('[prompt] load error:', e.message);
+  }
+}
+function maybeReloadPrompt() {
+  if (!PROMPT_AUTO_RELOAD || PROMPT_URL) return;
+  try {
+    const p = PROMPT_FILE;
+    if (!fs.existsSync(p)) return;
+    const stat = fs.statSync(p);
+    if (promptMeta.mtimeMs !== stat.mtimeMs) loadPrompt(true);
+  } catch {}
+}
+
+// initial load
+loadPrompt(true);
 
 // ---- Optional Redis for persistent sessions ----
 const REDIS_URL = process.env.REDIS_URL || '';
@@ -24,43 +99,46 @@ if (REDIS_URL) {
   }
 }
 
-// ---- Company info (env-configurable) ----
-const COMPANY = {
-  name: process.env.COMPANY_NAME || 'Blue Home Inmobiliaria',
-  desc: process.env.COMPANY_SHORT_DESC || 'Empresa premium en administración de propiedades.',
-  services: (process.env.SERVICES || 'Administración, Arriendo, Venta, Avalúos').split(',').map(s => s.trim()).filter(Boolean),
-  cities: (process.env.CITIES || 'Palmira, Cali').split(',').map(s => s.trim()).filter(Boolean),
-  hours: process.env.HOURS || 'Lun-Vie 9:00-18:00',
-  address: process.env.ADDRESS || 'Palmira, Valle del Cauca',
-  whatsapp: process.env.WHATSAPP || '',
-  phone: process.env.PHONE || '',
-  email: process.env.EMAIL || '',
-  website: process.env.WEBSITE || '',
-  privacy: process.env.PRIVACY_URL || ''
-};
-
-// ---- Simulation parameters ----
-const SMMLV = parseInt(process.env.SMMLV || '1423500', 10);
-const ADMIN_BASE_PCT = parseFloat(process.env.ADMIN_BASE_PCT || '10.5'); // %
-const IVA_PCT = parseFloat(process.env.IVA_PCT || '19'); // %
-const AMPARO_BASICO_PCT = parseFloat(process.env.AMPARO_BASICO_PCT || '2.05'); // %
-const AMPARO_INTEGRAL_PCT = parseFloat(process.env.AMPARO_INTEGRAL_PCT || '12.31'); // %
+// ---- Company & simulation values (from prompt, env overrides) ----
+function cfgCompany() {
+  const c = promptCfg.contact || {};
+  const id = promptCfg.identity || {};
+  const services = Array.isArray(promptCfg.services) ? promptCfg.services : [];
+  return {
+    name: process.env.COMPANY_NAME || id.company_name || 'Blue Home Inmobiliaria',
+    desc: process.env.COMPANY_SHORT_DESC || id.description || '',
+    services,
+    cities: (process.env.CITIES ? process.env.CITIES.split(',').map(s=>s.trim()) : (c.cities || [])),
+    hours: process.env.HOURS || c.hours || '',
+    address: process.env.ADDRESS || c.address || '',
+    whatsapp: process.env.WHATSAPP || c.whatsapp || '',
+    phone: process.env.PHONE || c.phone || '',
+    email: process.env.EMAIL || c.email || '',
+    website: process.env.WEBSITE || c.website || '',
+    privacy: process.env.PRIVACY_URL || c.privacy_url || ''
+  };
+}
+function cfgSim() {
+  const s = promptCfg.simulation || {};
+  return {
+    SMMLV: parseInt(process.env.SMMLV || s.smmlv || 1423500, 10),
+    ADMIN_BASE_PCT: parseFloat(process.env.ADMIN_BASE_PCT || s.admin_base_pct || 10.5),
+    IVA_PCT: parseFloat(process.env.IVA_PCT || s.iva_pct || 19),
+    AMPARO_BASICO_PCT: parseFloat(process.env.AMPARO_BASICO_PCT || s.amparo_basico_pct || 2.05),
+    AMPARO_INTEGRAL_PCT: parseFloat(process.env.AMPARO_INTEGRAL_PCT || s.amparo_integral_pct || 12.31),
+  };
+}
 
 // ---- Session helpers ----
 const stateByUser = new Map();
 async function loadSession(sessionId) {
-  try {
-    if (redis) {
-      const raw = await redis.get(`sess:${sessionId}`);
-      if (raw) return JSON.parse(raw);
-    }
-  } catch (e) { console.error('[redis] load error', e.message); }
+  try { if (redis) { const raw = await redis.get(`sess:${sessionId}`); if (raw) return JSON.parse(raw); } }
+  catch (e) { console.error('[redis] load error', e.message); }
   return stateByUser.get(sessionId) || { expecting: null, filters: {}, seller: {}, name: '' };
 }
 async function saveSession(sessionId, state) {
-  try {
-    if (redis) await redis.set(`sess:${sessionId}`, JSON.stringify(state), 'EX', SESSION_TTL_SECONDS);
-  } catch (e) { console.error('[redis] save error', e.message); }
+  try { if (redis) await redis.set(`sess:${sessionId}`, JSON.stringify(state), 'EX', SESSION_TTL_SECONDS); }
+  catch (e) { console.error('[redis] save error', e.message); }
   stateByUser.set(sessionId, state);
 }
 async function resetSession(sessionId) {
@@ -154,56 +232,45 @@ function renderProperty(p) {
   if (p.youtube) lines.push(`▶️ Video: ${p.youtube}`);
   return lines.join('\n');
 }
-function fmtCOP(n) {
-  const v = Math.round(n || 0);
-  return '$' + v.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-}
-function namePrefix(name) {
-  const n = (name||'').trim();
-  return n ? (n + ', ') : '';
-}
+function fmtCOP(n) { const v = Math.round(n || 0); return '$' + v.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+function namePrefix(name) { const n = (name||'').trim(); return n ? (n + ', ') : ''; }
 
 // ---- Canon simulation ----
 function detectCanonValue(text='') {
   const t = String(text||'').toLowerCase();
   if (!t.includes('canon')) return null;
-  const m = t.replace(/[.,]/g,'').match(/(\d{5,9})/); // números de 5 a 9 dígitos
+  const m = t.replace(/[.,]/g,'').match(/(\d{5,9})/);
   return m ? parseInt(m[1],10) : null;
 }
 function simulateCanon(canon) {
-  const adminRate = (ADMIN_BASE_PCT/100) * (1 + IVA_PCT/100);
+  const sim = cfgSim();
+  const adminRate = (sim.ADMIN_BASE_PCT/100) * (1 + sim.IVA_PCT/100);
   const admin = Math.round(canon * adminRate);
-  const amparoBasico = Math.round(canon * (AMPARO_BASICO_PCT/100));
-  const amparoIntegral = Math.round((canon + SMMLV) * (AMPARO_INTEGRAL_PCT/100));
+  const amparoBasico = Math.round(canon * (sim.AMPARO_BASICO_PCT/100));
+  const amparoIntegral = Math.round((canon + sim.SMMLV) * (sim.AMPARO_INTEGRAL_PCT/100));
   const descMes1 = admin + amparoBasico + amparoIntegral;
   const descMesesSig = admin + amparoBasico;
   const netoMes1 = canon - descMes1;
   const netoMesesSig = canon - descMesesSig;
-  return {
-    admin, amparoBasico, amparoIntegral,
-    descMes1, descMesesSig,
-    netoMes1, netoMesesSig
-  };
+  return { admin, amparoBasico, amparoIntegral, descMes1, descMesesSig, netoMes1, netoMesesSig };
 }
 
-// ---- Respuestas plantilla ----
+// ---- Response templates based on prompt ----
 function msgCompanyIntro() {
-  const s = `Somos ${COMPANY.name}. ${COMPANY.desc}\nServicios: ${COMPANY.services.join(', ')}.\nOperamos en: ${COMPANY.cities.join(', ')}.`;
-  const contact = [COMPANY.whatsapp && `WhatsApp: ${COMPANY.whatsapp}`, COMPANY.phone && `Tel: ${COMPANY.phone}`, COMPANY.email && `Email: ${COMPANY.email}`, COMPANY.website && `Web: ${COMPANY.website}`].filter(Boolean).join(' | ');
+  const C = cfgCompany();
+  const s = `Somos ${C.name}. ${C.desc}\nServicios: ${C.services.join(', ')}.\nOperamos en: ${C.cities.join(', ')}.`;
+  const contact = [C.whatsapp && `WhatsApp: ${C.whatsapp}`, C.phone && `Tel: ${C.phone}`, C.email && `Email: ${C.email}`, C.website && `Web: ${C.website}`].filter(Boolean).join(' | ');
   return [s, contact].filter(Boolean).join('\n');
 }
-function msgHours() { return `⏰ Horarios: ${COMPANY.hours}`; }
-function msgAddress() { return COMPANY.address ? `📍 Dirección: ${COMPANY.address}` : '📍 Atendemos principalmente en línea. ¿En qué ciudad estás?'; }
-function msgTalkToAgent() {
-  const lines = ['Te conecto con un asesor.'];
-  if (COMPANY.whatsapp) lines.push(`WhatsApp: ${COMPANY.whatsapp}`);
-  if (COMPANY.phone) lines.push(`Tel: ${COMPANY.phone}`);
-  return lines.join('\n');
-}
-function msgPrivacy() { return COMPANY.privacy ? `🔐 Tratamiento de datos: ${COMPANY.privacy}` : '🔐 Tratamiento de datos según ley 1581 de 2012.'; }
+function msgHours() { return `⏰ Horarios: ${cfgCompany().hours}`; }
+function msgAddress() { const C = cfgCompany(); return C.address ? `📍 Dirección: ${C.address}` : '📍 Atendemos principalmente en línea. ¿En qué ciudad estás?'; }
+function msgTalkToAgent() { const C = cfgCompany(); const lines = ['Te conecto con un asesor.']; if (C.whatsapp) lines.push(`WhatsApp: ${C.whatsapp}`); if (C.phone) lines.push(`Tel: ${C.phone}`); return lines.join('\n'); }
+function msgPrivacy() { const C = cfgCompany(); return C.privacy ? `🔐 Tratamiento de datos: ${C.privacy}` : '🔐 Tratamiento de datos según ley 1581 de 2012.'; }
 
 // ---- Main controller ----
 async function handleWebhookPayload(payload) {
+  maybeReloadPrompt();
+
   const { contact_id, user_name, text } = payload || {};
   const session = String(contact_id || user_name || 'anon');
   const st = await loadSession(session);
@@ -227,21 +294,23 @@ async function handleWebhookPayload(payload) {
     const sim = simulateCanon(canonVal);
     const lines = [
       `${namePrefix(name)}te dejo la simulación sobre un canon de ${fmtCOP(canonVal)}:`,
-      `• Administración (10.5% + IVA): ${fmtCOP(sim.admin)}`,
-      `• Amparo básico (2.05%): ${fmtCOP(sim.amparoBasico)}`,
-      `• Primer mes, Amparo integral (12.31% de canon + SMMLV): ${fmtCOP(sim.amparoIntegral)}`,
+      `• Administración (${cfgSim().ADMIN_BASE_PCT}% + IVA ${cfgSim().IVA_PCT}%): ${fmtCOP(sim.admin)}`,
+      `• Amparo básico (${cfgSim().AMPARO_BASICO_PCT}%): ${fmtCOP(sim.amparoBasico)}`,
+      `• Primer mes, Amparo integral (${cfgSim().AMPARO_INTEGRAL_PCT}% de canon + SMMLV): ${fmtCOP(sim.amparoIntegral)}`,
       `\nPrimer mes → Descuento total: ${fmtCOP(sim.descMes1)} | Te quedan: ${fmtCOP(sim.netoMes1)}`,
       `Meses siguientes → Descuento: ${fmtCOP(sim.descMesesSig)} | Te quedan: ${fmtCOP(sim.netoMesesSig)}`
     ];
     return { messages: [{ type:'text', text: lines.join('\n') }], quick_replies: ['Quiero que administren mi inmueble','Ver inmuebles','Hablar con asesor'], context: { session_id: session } };
   }
   if (t.includes('canon')) {
-    return { messages: [{ type:'text', text: `${namePrefix(name)}para simular, dime el valor del canon (en números).` }], context: { session_id: session } };
+    const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'para simular, dime el valor del canon (en números).';
+    return { messages: [{ type:'text', text: namePrefix(name) + ask }], context: { session_id: session } };
   }
 
-  // ---- VIP seller interest
+  // ---- VIP seller intent
   if (/(administren ustedes|administrenlo|administre[n]? mi inmueble|administra[r]? mi inmueble|necesito que lo arrienden|entregarles el inmueble|quiero que lo administren|quiero que administren)/.test(t)) {
-    const msg = `${namePrefix(name)}¡claro que sí! Te daremos trato VIP: plataformas de publicación, seguimiento y reportes claros. Tu confianza es nuestro mayor compromiso.\n\nNota Interna: Este cliente está interesado en entregar su inmueble. ¡Atención personalizada inmediata!`;
+    const vip = (promptCfg.messages && promptCfg.messages.vip_admin) || 'Te daremos trato VIP. ¡Atención personalizada inmediata!';
+    const msg = namePrefix(name) + vip;
     return { messages: [{ type:'text', text: msg }], quick_replies: ['Hablar con asesor','Simular canon','Ver inmuebles'], context: { session_id: session, lead: { intent: 'admin_service' } } };
   }
 
@@ -256,7 +325,8 @@ async function handleWebhookPayload(payload) {
     return { messages: [{ type:'text', text: namePrefix(name) + msgAddress() }], quick_replies: ['Ver inmuebles','Hablar con asesor'], context: { session_id: session } };
   }
   if (/(servicio[s]?|que ofrecen|qu[eé] servicios)/.test(t)) {
-    const s = `Servicios: ${COMPANY.services.join(', ')}.`;
+    const C = cfgCompany();
+    const s = `Servicios: ${C.services.join(', ')}.`;
     return { messages: [{ type:'text', text: namePrefix(name) + s }], quick_replies: ['Ver inmuebles','Vender inmueble','Hablar con asesor'], context: { session_id: session } };
   }
   if (/(financia|cr[eé]dito|leasing|hipoteca|cuota)/.test(t)) {
@@ -270,31 +340,28 @@ async function handleWebhookPayload(payload) {
     return { messages: [{ type:'text', text: namePrefix(name) + msgPrivacy() }], context: { session_id: session } };
   }
 
-  // ---- Vender inmueble mini-form
+  // ---- Seller mini-form
   if (/(vender|quiero vender|publicar|tasaci[oó]n|avalu[oó])/.test(t) || st.expecting?.startsWith('seller_')) {
     st.seller = st.seller || {};
     if (!st.seller.tipo && !st.expecting) {
-      st.expecting = 'seller_tipo';
-      await saveSession(session, st);
+      st.expecting = 'seller_tipo'; await saveSession(session, st);
       return { messages: [{ type:'text', text: namePrefix(name) + '¡Perfecto! ¿Qué tipo de inmueble quieres vender? (casa, apartamento, local u otro)' }], context: { session_id: session } };
     }
     if (st.expecting === 'seller_tipo') {
       st.seller.tipo = normalizaTipo(text) || text;
-      st.expecting = 'seller_ciudad';
-      await saveSession(session, st);
+      st.expecting = 'seller_ciudad'; await saveSession(session, st);
       return { messages: [{ type:'text', text: namePrefix(name) + '¿En qué ciudad/barrio está ubicado?' }], context: { session_id: session } };
     }
     if (st.expecting === 'seller_ciudad') {
       st.seller.ciudad = text;
-      st.expecting = 'seller_telefono';
-      await saveSession(session, st);
-      const hint = COMPANY.whatsapp ? ` (o escríbenos a ${COMPANY.whatsapp})` : '';
+      st.expecting = 'seller_telefono'; await saveSession(session, st);
+      const C = cfgCompany();
+      const hint = C.whatsapp ? ` (o escríbenos a ${C.whatsapp})` : '';
       return { messages: [{ type:'text', text: namePrefix(name) + '¿Cuál es tu número de contacto?' + hint }], context: { session_id: session } };
     }
     if (st.expecting === 'seller_telefono') {
       st.seller.telefono = text.replace(/[^\d+]/g,'');
-      st.expecting = null;
-      await saveSession(session, st);
+      st.expecting = null; await saveSession(session, st);
       const resumen = `✔️ Tipo: ${st.seller.tipo}\n📍 Ciudad: ${st.seller.ciudad}\n📞 Tel: ${st.seller.telefono}`;
       return { messages: [
           { type:'text', text: namePrefix(name) + '¡Gracias! Un asesor te contactará para valoración y publicación de tu inmueble.' },
@@ -307,112 +374,59 @@ async function handleWebhookPayload(payload) {
   }
 
   // ---- Código de inmueble
-  // Si menciona "código" sin número, reforzar que consultamos Sheets
   if (/\bc(ó|o)digo\b/.test(t) && !/\d{1,4}/.test(t)) {
-    st.expecting = 'code';
-    await saveSession(session, st);
+    st.expecting = 'code'; await saveSession(session, st);
     return { messages: [{ type:'text', text: namePrefix(name) + 'Puedo consultar nuestro Google Sheets. Dime el código (1 a 4 dígitos) y te comparto la información.' }], context: { session_id: session } };
   }
   const code = extractCode(text, st.expecting === 'code');
   if (code) {
     const p = await propertyByCodeLoose(code);
     if (!p) {
-      st.expecting = 'code';
-      await saveSession(session, st);
-      return {
-        messages: [{ type: 'text', text: namePrefix(name) + `No encuentro el código ${code}. Verifica el número o intenta otro.` }],
-        quick_replies: ['Intentar otro código', 'Buscar por filtros'],
-        context: { session_id: session }
-      };
+      st.expecting = 'code'; await saveSession(session, st);
+      return { messages: [{ type:'text', text: namePrefix(name) + `No encuentro el código ${code}. Verifica el número o intenta otro.` }], quick_replies: ['Intentar otro código','Buscar por filtros'], context: { session_id: session } };
     }
     if (DEBUG_YT) console.log('[YOUTUBE_CHECK] webhook code=%s youtube=%s', code, p.youtube || '');
     if ((p.estadoNorm || p.estado) !== 'disponible') {
-      return {
-        messages: [
+      return { messages: [
           { type:'text', text: namePrefix(name) + `El código ${code} no está disponible ahora.` },
           { type:'text', text: '¿Deseas buscar por filtros para mostrarte opciones similares?' }
-        ],
-        quick_replies: ['Sí, buscar por filtros','Hablar con asesor'],
-        context: { session_id: session }
-      };
+        ], quick_replies: ['Sí, buscar por filtros','Hablar con asesor'], context: { session_id: session } };
     }
-    st.expecting = null;
-    st.lastIntent = 'property_by_code';
-    await saveSession(session, st);
-    return {
-      messages: [{ type:'text', text: renderProperty(p) }],
-      quick_replies: ['Agendar visita','Ver más opciones','Hablar con asesor'],
-      context: { session_id: session }
-    };
+    st.expecting = null; st.lastIntent = 'property_by_code'; await saveSession(session, st);
+    return { messages: [{ type:'text', text: renderProperty(p) }], quick_replies: ['Agendar visita','Ver más opciones','Hablar con asesor'], context: { session_id: session } };
   }
 
-  // ---- Activadores de filtros / catálogo
-  const wantsFilters = /(buscar|busco|filtrar|filtro|filtros|otro inmueble|otra opcion|otra opción|mas opciones|más opciones|ver mas|ver más|siguiente|otro|ver inmuebles|portafolio)/.test(t);
-  if (wantsFilters || st.expecting === 'type' || st.expecting === 'budget' || st.expecting === 'rooms') {
+  // ---- Filters/catalog
+  if (/(buscar|busco|filtrar|filtro|filtros|otro inmueble|otra opcion|otra opción|mas opciones|más opciones|ver mas|ver más|siguiente|otro|ver inmuebles|portafolio)/.test(t) || st.expecting === 'type' || st.expecting === 'budget' || st.expecting === 'rooms') {
     let tipo = st.filters.tipo || normalizaTipo(text);
-    if (!tipo) {
-      st.expecting = 'type';
-      await saveSession(session, st);
-      return { messages: [{ type:'text', text: namePrefix(name) + '¿Qué tipo buscas? (casa, apartamento, apartaestudio o local)' }], context: { session_id: session } };
-    }
-    st.filters.tipo = tipo;
-    await saveSession(session, st);
-
+    if (!tipo) { st.expecting = 'type'; await saveSession(session, st); return { messages: [{ type:'text', text: namePrefix(name) + '¿Qué tipo buscas? (casa, apartamento, apartaestudio o local)' }], context: { session_id: session } }; }
+    st.filters.tipo = tipo; await saveSession(session, st);
     if (!st.filters.presupuesto || st.expecting === 'budget') {
       const pres = toNumber(text);
       if (pres) { st.filters.presupuesto = pres; await saveSession(session, st); }
-      else {
-        st.expecting = 'budget';
-        await saveSession(session, st);
-        return { messages: [{ type:'text', text: namePrefix(name) + '¿Cuál es tu presupuesto máximo (en pesos)?' }], context: { session_id: session } };
-      }
+      else { st.expecting = 'budget'; await saveSession(session, st); return { messages: [{ type:'text', text: namePrefix(name) + '¿Cuál es tu presupuesto máximo (en pesos)?' }], context: { session_id: session } }; }
     }
-
     const necesitaHabs = !(st.filters.tipo === 'apartaestudio' || st.filters.tipo === 'local');
     if (necesitaHabs && (!st.filters.habitaciones || st.expecting === 'rooms')) {
       const habs = toNumber(text);
       if (habs) { st.filters.habitaciones = habs; await saveSession(session, st); }
-      else {
-        st.expecting = 'rooms';
-        await saveSession(session, st);
-        return { messages: [{ type:'text', text: namePrefix(name) + '¿Cuántas habitaciones mínimo?' }], context: { session_id: session } };
-      }
+      else { st.expecting = 'rooms'; await saveSession(session, st); return { messages: [{ type:'text', text: namePrefix(name) + '¿Cuántas habitaciones mínimo?' }], context: { session_id: session } }; }
     }
-
-    const results = await searchProperties({
-      tipo: st.filters.tipo,
-      presupuesto: st.filters.presupuesto,
-      habitaciones: necesitaHabs ? st.filters.habitaciones : 0
-    });
-    st.expecting = null;
-    st.lastIntent = 'search_by_filters';
-    await saveSession(session, st);
-
+    const results = await searchProperties({ tipo: st.filters.tipo, presupuesto: st.filters.presupuesto, habitaciones: necesitaHabs ? st.filters.habitaciones : 0 });
+    st.expecting = null; st.lastIntent = 'search_by_filters'; await saveSession(session, st);
     if (!results.length) {
-      return {
-        messages: [
-          { type:'text', text: namePrefix(name) + 'No encontré inmuebles disponibles que coincidan con tu búsqueda.' },
-          { type:'text', text: '¿Quieres ampliar el presupuesto (+10%) o cambiar de zona/tipo?' }
-        ],
-        quick_replies: ['Ampliar presupuesto','Cambiar tipo','Hablar con asesor'],
-        context: { session_id: session }
-      };
+      return { messages: [
+        { type:'text', text: namePrefix(name) + 'No encontré inmuebles disponibles que coincidan con tu búsqueda.' },
+        { type:'text', text: '¿Quieres ampliar el presupuesto (+10%) o cambiar de zona/tipo?' }
+      ], quick_replies: ['Ampliar presupuesto','Cambiar tipo','Hablar con asesor'], context: { session_id: session } };
     }
-    return {
-      messages: results.map(p => ({ type:'text', text: renderProperty(p) })),
-      quick_replies: ['Agendar visita','Ver más opciones','Hablar con asesor'],
-      context: { session_id: session }
-    };
+    return { messages: results.map(p => ({ type:'text', text: renderProperty(p) })), quick_replies: ['Agendar visita','Ver más opciones','Hablar con asesor'], context: { session_id: session } };
   }
 
   // ---- Fallback
-  st.expecting = null;
-  await saveSession(session, st);
-  return {
-    messages: [{ type:'text', text: namePrefix(name) + '¿Quieres ver inmuebles o vender uno? También puedo simular descuentos de tu canon, darte horarios, dirección o ponerte con un asesor.' }],
-    quick_replies: ['Ver inmuebles','Tengo código','Simular canon','Hablar con asesor'],
-    context: { session_id: session }
-  };
+  const fb = (promptCfg.messages && promptCfg.messages.fallback) || '¿Quieres ver inmuebles o vender uno?';
+  st.expecting = null; await saveSession(session, st);
+  return { messages: [{ type:'text', text: namePrefix(name) + fb }], quick_replies: ['Ver inmuebles','Tengo código','Simular canon','Hablar con asesor'], context: { session_id: session } };
 }
 
 const app = express();
@@ -420,6 +434,10 @@ app.use(express.json());
 
 // Health
 app.get('/health', (req,res) => res.json({ ok: true }));
+
+// Prompt debug
+app.get('/api/debug/prompt', (req,res) => res.json({ meta: promptMeta, prompt: promptCfg, company: cfgCompany(), sim: cfgSim() }));
+app.post('/api/debug/prompt/reload', async (req,res) => { try { await loadPrompt(true); res.json({ ok: promptMeta.ok, meta: promptMeta }); } catch (e) { res.status(500).json({ error: e.message }); } });
 
 // Property API
 app.get('/api/property', async (req,res) => {
@@ -445,14 +463,10 @@ app.post('/api/search', async (req,res) => {
 app.post('/manychat/webhook', async (req,res) => {
   try {
     const resp = await handleWebhookPayload(req.body || {});
-    res.json((() => {
-      try {
-        const msgs = (resp && resp.messages) ? resp.messages : [];
-        const texts = msgs.map(m => (m && m.text) ? String(m.text) : '').filter(Boolean);
-        const joined = texts.slice(0,3).join('\n\n');
-        return Object.assign({}, resp, { respuesta: joined || '' });
-      } catch { return { respuesta: '' }; }
-    })());
+    const msgs = (resp && resp.messages) ? resp.messages : [];
+    const texts = msgs.map(m => (m && m.text) ? String(m.text) : '').filter(Boolean);
+    const joined = texts.slice(0,3).join('\n\n');
+    res.json(Object.assign({}, resp, { respuesta: joined || '' }));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -476,8 +490,8 @@ app.post('/api/chat', async (req,res) => {
   }
 });
 
-// Debug
-app.get('/api/debug/env', (req,res) => res.json({ SHEETS_CSV_URL, COMPANY, SIMULATION: { SMMLV, ADMIN_BASE_PCT, IVA_PCT, AMPARO_BASICO_PCT, AMPARO_INTEGRAL_PCT } }));
+// CSV Debug
+app.get('/api/debug/env', (req,res) => res.json({ SHEETS_CSV_URL, promptMeta }));
 app.get('/api/debug/raw', async (req,res) => {
   try {
     if (String(req.query.refresh || '') === '1') { cacheCsv = { ts:0, items:[] }; await fetchProperties(); }

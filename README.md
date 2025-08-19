@@ -1,15 +1,23 @@
-# BlueHome Backend v11 (MarianAI: contexto + intents + simulación de canon)
+# BlueHome Backend v12 (PROMPT externo + contexto + simulación)
 
-- Mantiene contexto por contacto (Redis opcional).
-- Intents: saludo, quiénes somos, horarios, ubicación, servicios, financiación, hablar con asesor, vender inmueble (mini-form), habeas data, ver inmuebles (código/filtros).
-- **Simulación automática** cuando el mensaje menciona "canon" y un valor: 
-  - Administración: 10.5% + IVA (10.5% * 1.19)
-  - Amparo básico: 2.05%
-  - Primer mes: Amparo integral 12.31% sobre (canon + SMMLV). SMMLV=1,423,500 por defecto (configurable).
-- Personaliza respuestas con el nombre del usuario si viene desde ManyChat.
+Esta versión carga un **PROMPT.json** editable (sin tocar código).
+- Puedes editar `PROMPT.json` y redeploy.
+- También puedes poner `PROMPT_URL` (un JSON alojado) para traerlo remoto.
+- Con `PROMPT_AUTO_RELOAD=true`, el servidor recarga el archivo automáticamente si cambia (detecta mtime).
+- Endpoints: `GET /api/debug/prompt`, `POST /api/debug/prompt/reload`.
 
-Endpoints:
-- POST /api/chat  → { "respuesta": "..." } (compatible ManyChat)
-- GET /api/property?code=1135
-- POST /api/search  (tipo/presupuesto/habitaciones)
-- Debug: /api/debug/env, /api/debug/raw?refresh=1, /api/debug/codes, /api/debug/peek?code=1135, /health
+## Variables
+```
+PORT=3000
+SHEETS_CSV_URL=<CSV público>
+DEBUG_YT=true
+
+# Persistencia sesiones (opcional)
+REDIS_URL=
+SESSION_TTL_SECONDS=86400
+
+# PROMPT
+PROMPT_FILE=./PROMPT.json
+PROMPT_AUTO_RELOAD=true
+PROMPT_URL=
+```
