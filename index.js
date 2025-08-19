@@ -359,6 +359,7 @@ async function handleWebhookPayload(payload) {
     return { messages: menu.messages, quick_replies: menu.quick_replies, context: { session_id: session, lead: { intent: 'admin_service' } } };
   }
 
+  }
 
   // ---- Pricing / fees intent (cuánto cobran / comisión / tarifa)
   if (/(cu[aá]nt[oa]\s*(cobran|cobra|vale|cuesta|cuestan)|tarifa|honorari[oa]s|porcentaje|%|comisi[oó]n)/.test(t)) {
@@ -384,7 +385,53 @@ async function handleWebhookPayload(payload) {
 
   
   // ---- Admin staged follow-ups
+  if (/(^|)(ver ejemplos|ejemplos|ejemplo)(\b|$)/.test(t) && st.lastIntent === 'admin') {
+    st.adminStage = 'after_insurance'; saveSession(session, st);
+    const title = (promptCfg.messages && promptCfg.messages.admin_insurance_examples_title) || 'Ejemplos:';
+    const body = (promptCfg.messages && promptCfg.messages.admin_insurance_examples) || '';
+    return { messages: [{ type:'text', text: namePrefix(name) + title + '\n' + body }], quick_replies: ['Ver costos','Simular canon','Cómo trabajamos'], context: { session_id: session } };
+  }
+
   if (st.adminStage === 'menu') {
+    if (/(ver ejemplos|ejemplos|ejemplo)/.test(t)) {
+      st.adminStage = 'after_insurance'; saveSession(session, st);
+      const title = (promptCfg.messages && promptCfg.messages.admin_insurance_examples_title) || 'Ejemplos:';
+      const body = (promptCfg.messages && promptCfg.messages.admin_insurance_examples) || '';
+      return { messages: [{ type:'text', text: namePrefix(name) + title + '\n' + body }], quick_replies: ['Ver costos','Simular canon','Cómo trabajamos'], context: { session_id: session } };
+    }
+
+    if (/(seguro|amparo|cobertura|cubre)/.test(t)) {
+      st.adminStage = 'after_insurance'; saveSession(session, st);
+      const info = (promptCfg.messages && promptCfg.messages.admin_insurance_explain_short) || 'Amparo básico e integral explicados.';
+      return { messages: [{ type:'text', text: namePrefix(name) + info }], quick_replies: ['Ver ejemplos','Ver costos','Simular canon','Cómo trabajamos'], context: { session_id: session } };
+    }
+
+  if (st.adminStage === 'pre_costs') {
+  if (/(ver ejemplos|ejemplos|ejemplo)/.test(t)) {
+    st.adminStage = 'after_insurance'; saveSession(session, st);
+    const title = (promptCfg.messages && promptCfg.messages.admin_insurance_examples_title) || 'Ejemplos:';
+    const body = (promptCfg.messages && promptCfg.messages.admin_insurance_examples) || '';
+    return { messages: [{ type:'text', text: namePrefix(name) + title + '\n' + body }], quick_replies: ['Ver costos','Simular canon','Cómo trabajamos'], context: { session_id: session } };
+  }
+
+    const yes = /(s[ií]|si,|sí,|cu[eé]ntame|explicar|explicame|explícame|seguro|amparo)/.test(t);
+    const direct = /(ver costos|costos directo|costos ya|ver costo)/.test(t);
+    if (yes) {
+      st.adminStage = 'after_insurance'; saveSession(session, st);
+      const info = (promptCfg.messages && promptCfg.messages.admin_insurance_explain_short) || 'Amparo básico e integral explicados.';
+      return { messages: [{ type:'text', text: namePrefix(name) + info }], quick_replies: ['Ver ejemplos','Ver costos','Simular canon','Cómo trabajamos'], context: { session_id: session } };
+    }
+    if (direct) {
+      st.adminStage = 'after_costos'; saveSession(session, st);
+      const chunk = adminChunk('costos');
+      return { messages: [{ type:'text', text: namePrefix(name) + chunk }], quick_replies: ['Simular canon','Cómo trabajamos','Oficina Virtual','Hablar con asesor'], context: { session_id: session } };
+    }
+    // If type something else, re-ask
+    const q = (promptCfg.messages && promptCfg.messages.admin_pre_costs_question) || '¿Quieres ver qué cubren los seguros antes de los costos?';
+    const opts = (promptCfg.messages && promptCfg.messages.admin_pre_costs_options) || ['Sí, cuéntame','Ver costos directo','Simular canon'];
+    return { messages: [{ type:'text', text: namePrefix(name) + q }], quick_replies: opts, context: { session_id: session } };
+  }
+
     if (/(costos|precio|tarifa|comisi[oó]n)/.test(t)) {
       st.adminStage = 'after_costos'; await saveSession(session, st);
       const chunk = adminChunk('costos');
@@ -414,6 +461,11 @@ async function handleWebhookPayload(payload) {
       if (t.includes('simular')) { st.adminStage = 'ask_canon'; await saveSession(session, st); const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'para simular, dime el valor del canon (en números).'; return { messages: [{type:'text', text: namePrefix(name)+ask}], context: { session_id: session } }; }
     }
   }
+    if (/^ver costos$/.test(t)) {
+    st.adminStage = 'after_costos'; saveSession(session, st);
+    const chunk = adminChunk('costos');
+    return { messages: [{ type:'text', text: namePrefix(name) + chunk }], quick_replies: ['Simular canon','Cómo trabajamos','Oficina Virtual','Hablar con asesor'], context: { session_id: session } };
+  }
   if (st.adminStage === 'ask_canon') {
     const amount = extractAmount(text || '');
     if (!amount) { const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'para simular, dime el valor del canon (en números).'; return { messages: [{ type:'text', text: namePrefix(name) + ask }], context: { session_id: session } }; }
@@ -428,7 +480,7 @@ async function handleWebhookPayload(payload) {
     ];
     st.adminStage = 'menu'; await saveSession(session, st);
     const menu = adminMenu();
-    return { messages: [{ type:'text', text: lines.join('\\n') }, ...menu.messages], quick_replies: menu.quick_replies, context: { session_id: session } };
+    return { messages: [{ type:'text', text: lines.join('\n') }], quick_replies: menu.quick_replies, context: { session_id: session } };
   }
 
 // ---- Simulation keyword (e.g., "simular")
@@ -522,7 +574,7 @@ async function handleWebhookPayload(payload) {
   
   // ---- Fallback -> entry menu
   const menu = entryMenu();
-  return { messages: [{type:'text', text: namePrefix(name) + ((promptCfg.messages && promptCfg.messages.entry_menu_title) || '¿Cómo puedo ayudarte hoy?')}], quick_replies: menu.quick_replies, context: { session_id: session } };
+  return { messages: [{type:'text', text: (promptCfg.messages && promptCfg.messages.entry_menu_title) || 'Elige una opción:'}], quick_replies: menu.quick_replies, context: { session_id: session } };
 
 }
 
