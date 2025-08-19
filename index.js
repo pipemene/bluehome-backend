@@ -417,6 +417,29 @@ async function handleWebhookPayload(payload) {
   }
 
   if (st.adminStage === 'menu') {
+    // detect a canon value typed directly while in the menu (e.g., "alquilo en 2000000")
+    const amountInline = extractAmount(text || '');
+    if (amountInline) {
+      st.adminStage = 'after_costos'; saveSession(session, st);
+      const sim = simulateCanon(amountInline);
+      const lines = [
+        `${namePrefix(name)}Simulación sobre ${fmtCOP(amountInline)}:`,
+        `• Administración (${cfgSim().ADMIN_BASE_PCT}% + IVA ${cfgSim().IVA_PCT}%): ${fmtCOP(sim.admin)}`,
+        `• Amparo básico (${cfgSim().AMPARO_BASICO_PCT}%): ${fmtCOP(sim.amparoBasico)}`,
+        `• Primer mes, Amparo integral (${cfgSim().AMPARO_INTEGRAL_PCT}% de canon + SMMLV): ${fmtCOP(sim.amparoIntegral)}`,
+        `\nPrimer mes → Descuento total: ${fmtCOP(sim.descMes1)} | Te quedan: ${fmtCOP(sim.netoMes1)}`,
+        `Meses siguientes → Descuento: ${fmtCOP(sim.descMesesSig)} | Te quedan: ${fmtCOP(sim.netoMesesSig)}`
+      ];
+      return { messages: [{ type:'text', text: lines.join('\n') }],
+               quick_replies: ['Cómo trabajamos','Ver ejemplos','Hablar con asesor'],
+               context: { session_id: session } };
+    }
+    if (/\bsimular\b/.test(t)) {
+      st.adminStage = 'after_costos'; saveSession(session, st);
+      const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'Escríbeme el valor del canon (solo números).';
+      return { messages: [{ type:'text', text: namePrefix(name) + ask }], context: { session_id: session } };
+    }
+
     // numeric choices
     if (/^\s*(1|uno)\b/.test(t)) { t = 'costos'; }
     else if (/^\s*(2|dos)\b/.test(t)) { t = 'como trabajan'; }
@@ -614,12 +637,14 @@ async function handleWebhookPayload(payload) {
   }
 
   
-  // ---- Fallback -> entry menu
-  const menu = entryMenu();
-  {
-      const mm = adminMenu();
-      return { messages: mm.messages, quick_replies: mm.quick_replies, context: { session_id: session } };
-    }
+  // ---- Fallback -> menu according to context
+  if (st.adminStage === 'menu' || st.lastIntent === 'admin') {
+    const mm = adminMenu();
+    return { messages: mm.messages, quick_replies: mm.quick_replies, context: { session_id: session } };
+  } else {
+    const em = entryMenu();
+    return { messages: em.messages, quick_replies: em.quick_replies, context: { session_id: session } };
+  }
 
 }
 
