@@ -124,6 +124,31 @@ function cfgSim() {
   };
 }
 
+
+function llmKnobs() {
+  const ls = (promptCfg.llm_style || {});
+  const tempFromEnv = process.env.OPENAI_TEMPERATURE;
+  const presFromEnv = process.env.OPENAI_PRESENCE_PENALTY;
+  const freqFromEnv = process.env.OPENAI_FREQUENCY_PENALTY;
+
+  let temperature = Number(tempFromEnv ?? ls.temperature_suggested ?? 0.55);
+  let presence_penalty = Number(presFromEnv ?? ls.presence_penalty ?? 0.0);
+  let frequency_penalty = Number(freqFromEnv ?? ls.frequency_penalty ?? 0.0);
+
+  if (Number.isNaN(temperature)) temperature = 0.55;
+  if (Number.isNaN(presence_penalty)) presence_penalty = 0.0;
+  if (Number.isNaN(frequency_penalty)) frequency_penalty = 0.0;
+
+  const mode = process.env.LLM_MODE || ls.mode || 'flex';
+
+  return { mode, temperature, presence_penalty, frequency_penalty, source: {
+    mode: process.env.LLM_MODE ? 'env' : (ls.mode ? 'prompt' : 'default'),
+    temperature: tempFromEnv ? 'env' : (ls.temperature_suggested !== undefined ? 'prompt' : 'default'),
+    presence_penalty: presFromEnv ? 'env' : (ls.presence_penalty !== undefined ? 'prompt' : 'default'),
+    frequency_penalty: freqFromEnv ? 'env' : (ls.frequency_penalty !== undefined ? 'prompt' : 'default'),
+  }};
+}
+
 // ---- Session helpers ----
 const stateByUser = new Map();
 async function loadSession(sessionId) {
@@ -602,11 +627,15 @@ const app = express();
 app.use(express.json());
 
 // Health
+// Health
 app.get('/health', (req,res) => res.json({ ok: true }));
 
 // Prompt debug
 app.get('/api/debug/prompt', (req,res) => res.json({ meta: promptMeta, prompt: promptCfg, company: cfgCompany(), sim: cfgSim() }));
-app.post('/api/debug/prompt/reload', async (req,res) => { try { await loadPrompt(true); res.json({ ok: promptMeta.ok, meta: promptMeta }); } catch (e) { res.status(500).json({ error: e.message }); } });
+app.post('/api/debug/prompt/reload', async (req,res) => { try { await loadPrompt(true);
+// LLM knobs debug
+app.get('/api/debug/llm', (req,res) => res.json({ knobs: llmKnobs() }));
+ res.json({ ok: promptMeta.ok, meta: promptMeta }); } catch (e) { res.status(500).json({ error: e.message }); } });
 
 // Property API
 app.get('/api/property', async (req,res) => {

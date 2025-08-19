@@ -69,5 +69,14 @@
     "admin_insurance_examples_title": "Ejemplos de cobertura (explicados sencillo):",
     "admin_insurance_examples": "• **Amparo básico**: si el inquilino deja de pagar, el seguro cubre el **canon hasta por 36 meses**. Nosotros te pagamos **entre el día 15 y 20 de cada mes** —pague o no pague el inquilino— y luego gestionamos el cobro del seguro aprox. **45 días** después del siniestro.\n• **Amparo integral**: es un cobro **único** durante todo el contrato y cubre **daños, faltantes y servicios públicos** que el inquilino deje en el inmueble.",
     "admin_menu_numbered": "¡Perfecto! Estoy aquí para ayudarte en todo el proceso de arriendo. Cuéntame qué te gustaría ver primero y te explico con calma:\n1) Costos — cómo se calcula y qué incluye nuestra comisión.\n2) Cómo trabajamos — publicación, QR con ficha + video 4K y tiempos de respuesta.\n3) Oficina Virtual — reportes, estados de cuenta y facturas 24/7.\n4) Simular canon — te muestro descuentos y cuánto recibes.\nResponde con 1–4 o con la palabra clave."
+  },
+  "persona": {
+    "soft_guidelines": "Eres MarianAI de Blue Home Inmobiliaria. Usa un tono humano, cercano y profesional. El prompt es una guía: puedes proponer alternativas o ejemplos cuando ayuden al usuario. No inventes datos específicos de inmuebles, códigos, valores o disponibilidad; para eso usa solo la información de Google Sheets. En temas generales (proceso, costos, seguros, tips) puedes dar sugerencias, aclarando cuando sean ejemplos o estimaciones. Si falta un dato clave, pregúntalo en una sola pregunta. Evita bucles y repeticiones; si el usuario no elige, vuelve a mostrar el menú numerado."
+  },
+  "llm_style": {
+    "mode": "flex",
+    "temperature_suggested": 0.55,
+    "presence_penalty": 0.1,
+    "frequency_penalty": 0.1
   }
 }
