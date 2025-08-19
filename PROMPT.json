@@ -33,7 +33,7 @@
     "amparo_integral_pct": 12.31
   },
   "messages": {
-    "ask_canon_value": "Escríbeme el canon (solo números) y te simulo.",
+    "ask_canon_value": "Perfecto. Escríbeme el **valor del canon** (solo números) y te hago la simulación paso a paso.",
     "fallback": "¿Deseas que administremos tu inmueble, simular tu canon o consultar un código para ver la ficha?",
     "admin_pitch": "• Publicamos con alcance y respuesta rápida.\n• Letreros con **código QR** que dirige 24/7 a nuestro chatbot: ficha técnica + video **4K** del inmueble.\n• El interesado puede **hacer el estudio de arrendamiento gratis y 100% digital**, a cualquier hora.\n• **Oficina Virtual para propietarios** en nuestra web: descarga de **estados de cuenta, facturas y seguimiento** 24/7.\n• Somos fuertes en alquiler: procesos ágiles, seguimiento y reportes claros.\n• Atención **lunes a domingo** (excepto festivos) y canales digitales 24/7.",
     "admin_fee": "📊 Comisión de administración: **10.5% + IVA (≈12.5%)** sobre el canon mensual. Incluye difusión y atención a interesados, evaluación 100% digital, gestión contractual, recaudo y reportes en tu Oficina Virtual.",
@@ -45,9 +45,9 @@
       "Oficina Virtual",
       "Simular canon"
     ],
-    "admin_chunk_costos": "Comisión: 10.5% + IVA (≈12.5%) del canon mensual. Incluye evaluación digital, contrato, recaudo y reportes.",
-    "admin_chunk_operacion": "Publicamos con alcance alto. Letreros con QR → chatbot 24/7 (ficha + video 4K). Atendemos lun–dom (excepto festivos).",
-    "admin_chunk_oficina": "Oficina Virtual 24/7: descarga de estados de cuenta y facturas en nuestra web.",
+    "admin_chunk_costos": "Hablemos de costos 😊\n• Comisión de administración: **10.5% + IVA (≈12.5%)** del canon mensual. \n• ¿Qué incluye? Evaluación y estudio 100% digital, elaboración del contrato, recaudo y reportes en tu Oficina Virtual. Además, te acompañamos en todo el ciclo del arriendo.\nSi quieres, puedo **simular** con tu canon para que veas cifras exactas.",
+    "admin_chunk_operacion": "Así trabajamos para alquilar rápido y con buena experiencia:\n• Publicamos en nuestros canales con respuesta ágil.\n• Letreros con **código QR** que dirigen 24/7 al chatbot: ficha técnica + **video 4K** del inmueble.\n• Estudio del arrendatario y formalización **100% digital**.\n• Atención **lunes a domingo** (excepto festivos) y canales digitales 24/7.\n¿Quieres que pasemos a **Costos** o preferes que te cuente sobre la **Oficina Virtual**?",
+    "admin_chunk_oficina": "Nuestra **Oficina Virtual** te da control 24/7:\n• Descarga de **estados de cuenta** y **facturas** en cualquier momento.\n• Seguimiento de pagos y reportes claros.\n• Soporte de nuestro equipo cuando lo necesites.\n¿Te muestro ahora los **costos** o hacemos una **simulación** con tu canon?",
     "owner_portal_help": "👤 Propietario cliente:\n• Oficina Virtual 24/7 para **estados de cuenta y facturas** en nuestra web.\n• Tutorial: https://www.youtube.com/watch?v=pzdBniZ9e4o",
     "tenant_pay_help": "🏠 Inquilino: puedes pagar la renta por **PSE**.\n• Tutorial de pago por PSE: https://www.youtube.com/watch?v=T4g9LKq2C8A",
     "entry_menu_title": "Elige una opción:",
@@ -65,9 +65,9 @@
       "Simular canon",
       "Ver ejemplos"
     ],
-    "admin_insurance_explain_short": "Coberturas de los seguros:\n• Amparo básico (2.05%): respaldo ante **incumplimientos de pago** del inquilino y gestiones iniciales de cobranza.\n• Amparo integral (12.31% solo en el 1er mes): incluye **garantía ampliada**, estudio del arrendatario y formalización 100% digital.\nNota: porcentajes ya están incorporados en la simulación.",
-    "admin_insurance_examples_title": "Ejemplos de cobertura:",
-    "admin_insurance_examples": "• Amparo básico (2.05%): cubre **canon de arrendamiento hasta por 36 meses** si el inquilino deja de pagar. Blue Home paga al propietario **entre el día 15 y 20 de cada mes**, pague o no pague el inquilino, y gestiona el cobro del seguro aprox. **45 días** después del siniestro.\n• Amparo integral (12.31% – cobro **único** durante todo el contrato): cubre **daños, faltantes y servicios públicos** que el inquilino deje en el inmueble.",
-    "admin_menu_numbered": "Elige una opción:\n1) Costos\n2) Cómo trabajamos\n3) Oficina Virtual\n4) Simular canon\nResponde con 1-4 o la palabra clave."
+    "admin_insurance_explain_short": "Antes de ver números, te cuento **qué cubren los seguros** para que tengas total tranquilidad:\n• **Amparo básico (2.05%)**: respaldo ante **incumplimientos de pago** del inquilino y gestiones iniciales de cobranza.\n• **Amparo integral (12.31% — solo el primer mes)**: garantía ampliada, estudio del arrendatario y formalización 100% digital.\nEstos porcentajes se reflejan en la simulación, así sabes con precisión cuánto recibes.",
+    "admin_insurance_examples_title": "Ejemplos de cobertura (explicados sencillo):",
+    "admin_insurance_examples": "• **Amparo básico**: si el inquilino deja de pagar, el seguro cubre el **canon hasta por 36 meses**. Nosotros te pagamos **entre el día 15 y 20 de cada mes** —pague o no pague el inquilino— y luego gestionamos el cobro del seguro aprox. **45 días** después del siniestro.\n• **Amparo integral**: es un cobro **único** durante todo el contrato y cubre **daños, faltantes y servicios públicos** que el inquilino deje en el inmueble.",
+    "admin_menu_numbered": "¡Perfecto! Estoy aquí para ayudarte en todo el proceso de arriendo. Cuéntame qué te gustaría ver primero y te explico con calma:\n1) Costos — cómo se calcula y qué incluye nuestra comisión.\n2) Cómo trabajamos — publicación, QR con ficha + video 4K y tiempos de respuesta.\n3) Oficina Virtual — reportes, estados de cuenta y facturas 24/7.\n4) Simular canon — te muestro descuentos y cuánto recibes.\nResponde con 1–4 o con la palabra clave."
   }
 }
