@@ -1,19 +1,30 @@
-# BlueHome — Prompt update (friendly costos)
+# Blue Home Backend (v12.8.16 - MenuFix Full)
 
-Este ZIP trae **solo** la actualización de textos para costos en `PROMPT.json`.
-Úsalo sobre tu backend v12.8.16 (o superior) sin tocar nada de lógica.
+Backend Express listo para Railway con:
+- Menús **numerados en el texto** (WhatsApp-friendly).
+- **Simulación de canon** (admin + amparos; SMMLV 1.423.500).
+- Flujo **seguros** (prefacio + ejemplos) antes de costos.
+- Lookup de inmuebles por código desde **CSV publicado** (`SHEETS_CSV_URL`).
+- Endpoints de debug: `/health`, `/api/debug/prompt`, `/api/debug/prompt/reload`, `/api/debug/llm`, `/api/debug/menu/admin|entry`.
 
-## Opción A — Reemplazar directamente en PROMPT.json
-1) Abre tu `PROMPT.json` del backend.
-2) Asegúrate de tener un objeto `messages` (si ya existe, mantenlo).
-3) Copia la clave **admin_chunk_costos** de `PROMPT_delta.json` y pégala dentro de `messages`,
-   reemplazando la que tengas.
+## Variables de entorno
+- `PORT` (opcional)
+- `SHEETS_CSV_URL` → URL pública del CSV de Google Sheets (Archivo → Compartir → Publicar en la web → CSV).
 
-## Opción B — Sobrescribir con línea de comando (si trabajas local)
-- Fusiona el campo `messages.admin_chunk_costos` con tu `PROMPT.json`.
+## Despliegue
+```bash
+npm i
+npm start
+```
+En Railway: crea servicio Node, sube ZIP, configura `SHEETS_CSV_URL`.
 
-## Texto nuevo
-Está en `PROMPT_delta.json`.
+## Pruebas
+- `GET /health` → `{ok:true}`
+- `GET /api/debug/menu/admin` → verás el menú numerado en `messages[0].text`
+- `POST /api/chat` body:
+```json
+{ "session":"test", "name":"Pipe", "text":"quiero que administren mi inmueble" }
+```
+Luego: `1`, `2`, `3` o `4` / “simular 2000000” / “costos” / “ver ejemplos”.
 
-> No modifica Google Sheets, intents ni endpoints. Solo cambia la redacción para que sea más amable y explicativa.
-
+> Nota: Si ya tienes una integración diferente de Google Sheets, puedes ignorar `SHEETS_CSV_URL` y adaptar `/api/property`.
