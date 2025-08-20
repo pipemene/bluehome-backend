@@ -1,0 +1,43 @@
+{
+  "persona": {
+    "soft_guidelines": "Eres MarianAI de Blue Home Inmobiliaria. Usa un tono humano, cercano y profesional. El prompt es una guía; puedes proponer alternativas o ejemplos cuando ayuden al usuario. No inventes datos específicos de inmuebles, códigos, valores o disponibilidad; usa solo Google Sheets. En temas generales (proceso, costos, seguros, tips) puedes dar sugerencias aclarando que son ejemplos. Si falta un dato clave, pídelo en una sola pregunta. Evita bucles; si el usuario no elige, muestra el menú numerado."
+  },
+  "llm_style": {
+    "mode": "flex",
+    "temperature_suggested": 0.55,
+    "presence_penalty": 0.1,
+    "frequency_penalty": 0.1
+  },
+  "messages": {
+    "entry_menu_title": "Elige una opción:",
+    "entry_menu_options": [
+      "Soy propietario",
+      "Soy inquilino",
+      "Tengo código",
+      "Buscar por filtros",
+      "Simular canon"
+    ],
+    "admin_menu_numbered": "¡Perfecto! Estoy aquí para ayudarte en todo el proceso de arriendo. Cuéntame qué te gustaría ver primero y te explico con calma:\n1) Costos — cómo se calcula y qué incluye nuestra comisión.\n2) Cómo trabajamos — publicación, QR con ficha + video 4K y tiempos de respuesta.\n3) Oficina Virtual — reportes, estados de cuenta y facturas 24/7.\n4) Simular canon — te muestro descuentos y cuánto recibes.\nResponde con 1–4 o con la palabra clave.",
+    "admin_menu": "¿Qué te gustaría saber primero?",
+    "admin_menu_options": [
+      "Costos",
+      "Cómo trabajamos",
+      "Oficina Virtual",
+      "Simular canon"
+    ],
+    "admin_chunk_costos": "Hablemos de costos 😊\n• Comisión de administración: **10.5% + IVA (≈12.5%)** del canon mensual.\n• ¿Qué incluye? Evaluación y estudio 100% digital, elaboración del contrato, recaudo y reportes en tu Oficina Virtual.\nSi quieres, puedo **simular** con tu canon para ver cifras exactas.",
+    "admin_chunk_operacion": "Así trabajamos para alquilar rápido y con buena experiencia:\n• Publicamos en nuestros canales con respuesta ágil.\n• Letreros con **código QR** → chatbot 24/7 con ficha técnica y **video 4K**.\n• Estudio del arrendatario y formalización **100% digital**.\n• Atención **lunes a domingo** (excepto festivos) y canales digitales 24/7.\n¿Pasamos a **Costos** o prefieres **Oficina Virtual**?",
+    "admin_chunk_oficina": "Nuestra **Oficina Virtual** te da control 24/7:\n• Descarga de **estados de cuenta** y **facturas**.\n• Seguimiento de pagos y reportes claros.\n• Soporte de nuestro equipo cuando lo necesites.\n¿Te muestro los **costos** o hacemos una **simulación** con tu canon?",
+    "admin_pre_costs_question": "Antes de ver los costos, ¿quieres saber qué cubren los seguros (amparo básico e integral)?",
+    "admin_pre_costs_options": [
+      "Sí, cuéntame",
+      "Ver costos directo",
+      "Simular canon",
+      "Ver ejemplos"
+    ],
+    "admin_insurance_explain_short": "Antes de ver números, te cuento **qué cubren los seguros** para que tengas tranquilidad:\n• **Amparo básico (2.05%)**: respaldo ante **incumplimientos de pago** del inquilino y gestiones iniciales de cobranza.\n• **Amparo integral (12.31% — solo el primer mes)**: garantía ampliada, estudio del arrendatario y formalización 100% digital.\nEstos porcentajes se reflejan en la simulación.",
+    "admin_insurance_examples_title": "Ejemplos de cobertura (explicados sencillo):",
+    "admin_insurance_examples": "• **Amparo básico**: si el inquilino deja de pagar, el seguro cubre el **canon hasta por 36 meses**. Blue Home paga al propietario **entre el día 15 y 20 de cada mes**, pague o no pague el inquilino, y gestiona el cobro del seguro aprox. **45 días** después del siniestro.\n• **Amparo integral**: cobro **único** durante todo el contrato; cubre **daños, faltantes y servicios públicos**.",
+    "ask_canon_value": "Perfecto. Escríbeme el **valor del canon** (solo números) y te hago la simulación paso a paso."
+  }
+}
