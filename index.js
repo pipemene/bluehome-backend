@@ -119,6 +119,17 @@ function norm(s) {
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\w\s]/g,' ').replace(/\s+/g,' ').trim();
 }
+// Pack response for ManyChat compatibility: adds `respuesta` (string) joining all text messages.
+function out(o){
+  try{
+    const msgs = (o && o.messages) ? o.messages : [];
+    const txt = msgs.map(m => (m && m.text) ? m.text : '').filter(Boolean).join('\n\n');
+    return { ...o, respuesta: txt };
+  }catch(e){
+    return o;
+  }
+}
+
 
 function namePrefix(name) {
   return name ? `${name}, ` : '';
@@ -171,13 +182,13 @@ async function handleWebhookPayload(payload) {
   saveSession(session, st);
 
   // Shortcuts por número (1-4)
-  if (/^\s*(1|uno)\b/.test(t)) { st.adminStage='after_costos'; saveSession(session, st); return { messages:[{type:'text', text: namePrefix(name) + adminChunk('costos')}], quick_replies: adminMenu().quick_replies }; }
-  if (/^\s*(2|dos)\b/.test(t)) { st.adminStage='after_operacion'; saveSession(session, st); return { messages:[{type:'text', text: namePrefix(name) + adminChunk('operacion')}], quick_replies: adminMenu().quick_replies }; }
-  if (/^\s*(3|tres)\b/.test(t)) { st.adminStage='after_oficina'; saveSession(session, st); return { messages:[{type:'text', text: namePrefix(name) + adminChunk('oficina')}], quick_replies: adminMenu().quick_replies }; }
+  if (/^\s*(1|uno)\b/.test(t)) { st.adminStage='after_costos'; saveSession(session, st); return out({ messages:[{type:'text', text: namePrefix(name) + adminChunk('costos')}], quick_replies: adminMenu().quick_replies ); }
+  if (/^\s*(2|dos)\b/.test(t)) { st.adminStage='after_operacion'; saveSession(session, st); return out({ messages:[{type:'text', text: namePrefix(name) + adminChunk('operacion')}], quick_replies: adminMenu().quick_replies ); }
+  if (/^\s*(3|tres)\b/.test(t)) { st.adminStage='after_oficina'; saveSession(session, st); return out({ messages:[{type:'text', text: namePrefix(name) + adminChunk('oficina')}], quick_replies: adminMenu().quick_replies ); }
   if (/^\s*(4|cuatro)\b/.test(t)) {
     st.adminStage = 'ask_canon'; saveSession(session, st);
     const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'Escríbeme el valor del canon (solo números).';
-    return { messages:[{type:'text', text: namePrefix(name)+ask}], quick_replies: [] };
+    return out({ messages:[{type:'text', text: namePrefix(name)+ask}], quick_replies: [] );
   }
 
   // Detectar canon en cualquier momento y simular
@@ -194,39 +205,39 @@ async function handleWebhookPayload(payload) {
       `Primer mes → Descuento total: ${fmtCOP(sim.descMes1)} | Te quedan: ${fmtCOP(sim.netoMes1)}`,
       `Meses siguientes → Descuento: ${fmtCOP(sim.descMesesSig)} | Te quedan: ${fmtCOP(sim.netoMesesSig)}`
     ];
-    return { messages:[{type:'text', text: lines.join('\n')}], quick_replies: ["Cómo trabajamos","Ver ejemplos","Hablar con asesor"] };
+    return out({ messages:[{type:'text', text: lines.join('\n')}], quick_replies: ["Cómo trabajamos","Ver ejemplos","Hablar con asesor"] );
   }
 
   // Intents por palabras
-  if (/(costos?|comision|precio|tarifa)/.test(t)) {
+  if (/(costos?|comisi[oó]n|precio|tarifa|cobr(?:ar|an|o|a)?|cu[aá]nto(?:\s+me)?\s+(?:cobran|cobrar|cobro)|cu[aá]nt[oa]\s+(?:vale|valen|cuesta|cuestan)|valor)/.test(t)) {
     st.adminStage = 'pre_costs'; saveSession(session, st);
     const q = (promptCfg.messages && promptCfg.messages.admin_pre_costs_question) || '¿Quieres ver qué cubren los seguros antes de los costos?';
     const opts = (promptCfg.messages && promptCfg.messages.admin_pre_costs_options) || ['Sí, cuéntame','Ver costos directo','Simular canon','Ver ejemplos'];
-    return { messages:[{type:'text', text: namePrefix(name)+q}], quick_replies: opts };
+    return out({ messages:[{type:'text', text: namePrefix(name)+q}], quick_replies: opts );
   }
   if (/(seguro|amparo|cobertura|cubre)/.test(t)) {
     st.adminStage = 'after_insurance'; saveSession(session, st);
     const info = (promptCfg.messages && promptCfg.messages.admin_insurance_explain_short) || 'Amparo básico e integral explicados.';
-    return { messages:[{type:'text', text: namePrefix(name)+info}], quick_replies: ['Ver ejemplos','Ver costos','Simular canon','Cómo trabajamos'] };
+    return out({ messages:[{type:'text', text: namePrefix(name)+info}], quick_replies: ['Ver ejemplos','Ver costos','Simular canon','Cómo trabajamos'] );
   }
   if (/(ver ejemplos|ejemplos|ejemplo)/.test(t)) {
     st.adminStage = 'after_insurance'; saveSession(session, st);
     const title = (promptCfg.messages && promptCfg.messages.admin_insurance_examples_title) || 'Ejemplos:';
     const body = (promptCfg.messages && promptCfg.messages.admin_insurance_examples) || '';
-    return { messages:[{type:'text', text: namePrefix(name)+title+'\n'+body}], quick_replies: ['Ver costos','Simular canon','Cómo trabajamos'] };
+    return out({ messages:[{type:'text', text: namePrefix(name)+title+'\n'+body}], quick_replies: ['Ver costos','Simular canon','Cómo trabajamos'] );
   }
   if (/(como funcionan|c[oó]mo trabajan|que hacen|proceso|metodologia)/.test(t)) {
     st.adminStage = 'after_operacion'; saveSession(session, st);
-    return { messages:[{type:'text', text: namePrefix(name)+adminChunk('operacion')}], quick_replies: ['Costos','Oficina Virtual','Simular canon'] };
+    return out({ messages:[{type:'text', text: namePrefix(name)+adminChunk('operacion')}], quick_replies: ['Costos','Oficina Virtual','Simular canon'] );
   }
   if (/(oficina|estados de cuenta|facturas)/.test(t)) {
     st.adminStage = 'after_oficina'; saveSession(session, st);
-    return { messages:[{type:'text', text: namePrefix(name)+adminChunk('oficina')}], quick_replies: ['Costos','Simular canon','Cómo trabajamos'] };
+    return out({ messages:[{type:'text', text: namePrefix(name)+adminChunk('oficina')}], quick_replies: ['Costos','Simular canon','Cómo trabajamos'] );
   }
   if (/\bsimular\b/.test(t)) {
     st.adminStage = 'ask_canon'; saveSession(session, st);
     const ask = (promptCfg.messages && promptCfg.messages.ask_canon_value) || 'Escríbeme el valor del canon (solo números).';
-    return { messages:[{type:'text', text: namePrefix(name)+ask}], quick_replies: [] };
+    return out({ messages:[{type:'text', text: namePrefix(name)+ask}], quick_replies: [] );
   }
 
   // Etapa pre_costs
@@ -234,20 +245,20 @@ async function handleWebhookPayload(payload) {
     if (/(s[ií]|si,|sí,|cuentame|cuéntame|explicar|explicame|explícame)/.test(t)) {
       st.adminStage = 'after_insurance'; saveSession(session, st);
       const info = (promptCfg.messages && promptCfg.messages.admin_insurance_explain_short) || 'Amparo básico e integral explicados.';
-      return { messages:[{type:'text', text: namePrefix(name)+info}], quick_replies: ['Ver ejemplos','Ver costos','Simular canon','Cómo trabajamos'] };
+      return out({ messages:[{type:'text', text: namePrefix(name)+info}], quick_replies: ['Ver ejemplos','Ver costos','Simular canon','Cómo trabajamos'] );
     }
     if (/(ver costos|costos directo|costos ya|ver costo)/.test(t)) {
       st.adminStage = 'after_costos'; saveSession(session, st);
-      return { messages:[{type:'text', text: namePrefix(name)+adminChunk('costos')}], quick_replies: ['Simular canon','Cómo trabajamos','Oficina Virtual'] };
+      return out({ messages:[{type:'text', text: namePrefix(name)+adminChunk('costos')}], quick_replies: ['Simular canon','Cómo trabajamos','Oficina Virtual'] );
     }
     const q = (promptCfg.messages && promptCfg.messages.admin_pre_costs_question) || '¿Quieres ver qué cubren los seguros antes de los costos?';
     const opts = (promptCfg.messages && promptCfg.messages.admin_pre_costs_options) || ['Sí, cuéntame','Ver costos directo','Simular canon','Ver ejemplos'];
-    return { messages:[{type:'text', text: namePrefix(name)+q}], quick_replies: opts };
+    return out({ messages:[{type:'text', text: namePrefix(name)+q}], quick_replies: opts );
   }
 
   // Si está en admin (por defecto) o no hay match claro, mostrar menú admin numerado
   const menuText = (promptCfg.messages && promptCfg.messages.admin_menu_numbered) || "Elige una opción:\n1) Costos\n2) Cómo trabajamos\n3) Oficina Virtual\n4) Simular canon\nResponde con 1-4 o palabra clave.";
-  return { messages:[{type:'text', text: namePrefix(name)+menuText}], quick_replies: adminMenu().quick_replies };
+  return out({ messages:[{type:'text', text: namePrefix(name)+menuText}], quick_replies: adminMenu().quick_replies );
 }
 
 // ---------------- Rutas ----------------
@@ -287,6 +298,38 @@ app.get('/api/property', async (req,res) => {
 });
 
 // Webhook / chat (ManyChat)
+
+// Quick test in browser: /api/chat/try?text=hola&user=123&name=Pipe
+app.get('/api/chat/try', async (req,res) => {
+  try {
+    const payload = {
+      session: req.query.user || 'try',
+      text: req.query.text || '',
+      name: req.query.name || ''
+    };
+    const out = await handleWebhookPayload(payload);
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// Debug: detect intent without invoking ManyChat mapping
+app.get('/api/debug/intent', (req,res) => {
+  try {
+    const t = norm(req.query.text || '');
+    let intent = 'menu';
+    if (/(costos?|comisi[oó]n|precio|tarifa|cobr(?:ar|an|o|a)?|cu[aá]nto(?:\s+me)?\s+(?:cobran|cobrar|cobro)|cu[aá]nt[oa]\s+(?:vale|valen|cuesta|cuestan)|valor)/.test(t)) intent='costos';
+    else if (/(seguro|amparo|cobertura|cubre)/.test(t)) intent='seguros';
+    else if (/(ver ejemplos|ejemplos|ejemplo)/.test(t)) intent='ejemplos';
+    else if (/(como funcionan|c[oó]mo trabajan|que hacen|proceso|metodologia)/.test(t)) intent='operacion';
+    else if (/(oficina|estado|factura|virtual)/.test(t)) intent='oficina';
+    else if (/(simul|canon|cu[aá]nto me queda)/.test(t)) intent='simular';
+    res.json({ intent, t });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
 app.post('/api/chat', async (req,res) => {
   try {
     const out = await handleWebhookPayload(req.body || {});
