@@ -198,7 +198,7 @@ async function handleWebhookPayload(payload) {
   }
 
   // Intents por palabras
-  if (/(costos?|comisi[oó]n|precio|tarifa|cobr(?:ar|an|o|a)?|cu[aá]nto(?:\s+me)?\s+(?:cobran|cobrar|cobro)|cu[aá]nt[oa]\s+(?:vale|valen|cuesta|cuestan)|valor)/.test(t)|comision|precio|tarifa)/.test(t)) {
+  if (/(costos?|comisi[oó]n|precio|tarifa|cobr(?:ar|an|o|a)?|cu[aá]nto(?:\s+me)?\s+(?:cobran|cobrar|cobro)|cu[aá]nt[oa]\s+(?:vale|valen|cuesta|cuestan)|valor)/.test(t))) {
     st.adminStage = 'pre_costs'; saveSession(session, st);
     const q = (promptCfg.messages && promptCfg.messages.admin_pre_costs_question) || '¿Quieres ver qué cubren los seguros antes de los costos?';
     const opts = (promptCfg.messages && promptCfg.messages.admin_pre_costs_options) || ['Sí, cuéntame','Ver costos directo','Simular canon','Ver ejemplos'];
